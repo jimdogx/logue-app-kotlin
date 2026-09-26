@@ -622,6 +622,8 @@ class DashboardViewModel @Inject constructor(
             val result = sendCommand(name, action, pin)
             result.onSuccess {
                 startCarFinderPolling(targetIsOff)
+            }.onFailure {
+                uiState = uiState.copy(isFlashing = false, isHonking = false)
             }
         }
     }

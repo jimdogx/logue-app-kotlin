@@ -18,9 +18,11 @@ import com.spencehouse.logue.service.remote.dto.Vehicle
 import com.spencehouse.logue.service.remote.dto.VehicleControl
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,6 +47,42 @@ class HondaLinkTelematicsHandler @Inject constructor(
 ) : VehicleTelematicsHandler {
 
     private val tag = "HondaLinkTelematicsHandler"
+
+    private fun isClarityPhev(vehicle: Vehicle): Boolean =
+        vehicle.modelCode.uppercase(Locale.US).contains("CLARITY")
+
+    private suspend fun getClarityGtcHeaders(vehicle: Vehicle): Result<Map<String, String>> {
+        authService.ensureAuthForVehicle(vehicle).onFailure { return Result.failure(it) }
+        val accessToken = sessionManager.accessToken ?: return Result.failure(Exception("No access token"))
+        val authDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        return Result.success(
+            mapOf(
+                "X-App-Id" to "com.honda.hondalink.connect",
+                "X-App-Version" to "5.4.4",
+                "X-Device-Id" to "b7a5e8f0-1c2d-4e3f-9a8b-7c6d5e4f3a2b",
+                "X-Vin-Auth-Date" to authDate,
+                "X-Vin" to vehicle.vin,
+                "BearerToken" to accessToken,
+            ),
+        )
+    }
+
+    private suspend fun sendClarityRemoteCommand(vehicle: Vehicle, requestDataJson: String): Result<String> {
+        val headers = getClarityGtcHeaders(vehicle).getOrElse { return Result.failure(it) }
+        val resp = wscApi.registerClarityRemoteList(headers, requestDataJson, vehicle.vin)
+        val body = resp.body()
+        if (resp.isSuccessful && body != null) {
+            val resultStatus = body["rmt_data"]?.jsonObject?.get("result_status")?.jsonPrimitive?.content
+            Log.d(tag, "Clarity RegisterRemoteList response: $body (result_status=$resultStatus)")
+            return if (resultStatus == null || resultStatus == "000" || resultStatus == "001" || resultStatus == "010") {
+                Result.success(resultStatus ?: "CLARITY_REMOTE_OK")
+            } else {
+                Result.failure(Exception("Clarity remote command returned status $resultStatus"))
+            }
+        }
+        val errorBody = resp.errorBody()?.string()
+        return Result.failure(Exception("Clarity remote command failed (${resp.code()}): $errorBody"))
+    }
 
     private suspend fun getHondaLinkHeaders(
         vehicle: Vehicle,
@@ -194,6 +232,14 @@ class HondaLinkTelematicsHandler @Inject constructor(
                 }
             }
 
+            val acRaw = vehicleInfo?.get("acStatus")?.jsonObject?.get("value")?.jsonPrimitive?.content
+            if (acRaw != null) {
+                sessionManager.cachedClimateStatus = when (acRaw.lowercase(Locale.US)) {
+                    "1", "on" -> "ON"
+                    else -> "OFF"
+                }
+            }
+
             if (battery != null && range != null) {
                 sessionManager.cachedBatteryPercentage = battery
                 sessionManager.cachedRange = range
@@ -331,6 +377,10 @@ class HondaLinkTelematicsHandler @Inject constructor(
         val vin = vehicle.vin
         return try {
             Log.d(tag, "Starting HondaLink climate for VIN: $vin")
+            if (isClarityPhev(vehicle)) {
+                val requestData = """{"VIN":"$vin","rmt_request":{"req_type":"start_acon","set_start_acon":{"acon_type":"force"}}}"""
+                return sendClarityRemoteCommand(vehicle, requestData)
+            }
             val headers = getHondaLinkHeaders(vehicle, messageId = "S-1").getOrElse {
                 return Result.failure(it)
             }
@@ -357,6 +407,10 @@ class HondaLinkTelematicsHandler @Inject constructor(
         val vin = vehicle.vin
         return try {
             Log.d(tag, "Stopping HondaLink climate for VIN: $vin")
+            if (isClarityPhev(vehicle)) {
+                val requestData = """{"VIN":"$vin","rmt_request":{"req_type":"stop_acon"}}"""
+                return sendClarityRemoteCommand(vehicle, requestData)
+            }
             val headers = getHondaLinkHeaders(vehicle, messageId = "S-1").getOrElse {
                 return Result.failure(it)
             }
@@ -380,6 +434,9 @@ class HondaLinkTelematicsHandler @Inject constructor(
     }
 
     override suspend fun setTargetChargeLevel(vehicle: Vehicle, level: Int): Result<String?> {
+        if (isClarityPhev(vehicle)) {
+            return Result.failure(Exception("Not supported on Clarity PHEV"))
+        }
         val vin = vehicle.vin
         return try {
             val headers = getHondaLinkHeaders(vehicle, messageId = "S-1").getOrElse {
@@ -399,6 +456,9 @@ class HondaLinkTelematicsHandler @Inject constructor(
     }
 
     override suspend fun requestLightHorn(vehicle: Vehicle, pin: String, action: String): Result<String?> {
+        if (isClarityPhev(vehicle)) {
+            return Result.failure(Exception("Not supported on Clarity PHEV"))
+        }
         val vin = vehicle.vin
         return try {
             val headers = getHondaLinkHeaders(vehicle, messageId = "S-1").getOrElse {
@@ -418,6 +478,9 @@ class HondaLinkTelematicsHandler @Inject constructor(
     }
 
     override suspend fun requestStopLightHorn(vehicle: Vehicle, pin: String): Result<String?> {
+        if (isClarityPhev(vehicle)) {
+            return Result.failure(Exception("Not supported on Clarity PHEV"))
+        }
         val vin = vehicle.vin
         return try {
             val headers = getHondaLinkHeaders(vehicle, messageId = "S-1").getOrElse {
@@ -437,6 +500,9 @@ class HondaLinkTelematicsHandler @Inject constructor(
     }
 
     override suspend fun requestDoorLock(vehicle: Vehicle, pin: String, action: String): Result<String?> {
+        if (isClarityPhev(vehicle)) {
+            return Result.failure(Exception("Not supported on Clarity PHEV"))
+        }
         val vin = vehicle.vin
         return try {
             val headers = getHondaLinkHeaders(vehicle, messageId = "S-1").getOrElse {
@@ -456,6 +522,14 @@ class HondaLinkTelematicsHandler @Inject constructor(
     }
 
     override suspend fun getClimateStatus(vehicle: Vehicle): Result<JsonObject> {
+        if (isClarityPhev(vehicle)) {
+            val status = sessionManager.cachedClimateStatus?.takeIf { it.isNotEmpty() } ?: "OFF"
+            return Result.success(
+                buildJsonObject {
+                    put("climateStatus", status)
+                },
+            )
+        }
         val vin = vehicle.vin
         return try {
             val headers = getHondaLinkHeaders(vehicle).getOrElse {

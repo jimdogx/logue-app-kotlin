@@ -108,4 +108,13 @@ interface HondaWscApi {
         @Path("requestId") requestId: String,
         @HeaderMap headers: Map<String, String>,
     ): Response<JsonObject>
+
+    @FormUrlEncoded
+    @POST("https://www.jp.hondalink.com/api/GW/VinService/RegisterRemoteList")
+    suspend fun registerClarityRemoteList(
+        @HeaderMap headers: Map<String, String>,
+        @Field("requestdata") requestData: String,
+        @Field("VIN") vin: String,
+    ): Response<JsonObject>
 }
+
