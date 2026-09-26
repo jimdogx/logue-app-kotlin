@@ -71,3 +71,4 @@ build/
 # Release builds
 /app/release/
 
+gradle.properties

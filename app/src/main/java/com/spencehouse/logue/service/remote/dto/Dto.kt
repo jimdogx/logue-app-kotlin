@@ -45,9 +45,29 @@ data class Vehicle(
     @SerialName("ModelYear") val modelYear: String,
     @SerialName("DivisionName") val divisionName: String,
     @SerialName("ModelCode") val modelCode: String,
-    @SerialName("Alias Name") val aliasName: String?,
-    @SerialName("Asset34FrontPath") val asset34FrontPath: String?,
-)
+    @SerialName("Alias Name") val aliasName: String? = null,
+    @SerialName("Asset34FrontPath") val asset34FrontPath: String? = null,
+    @SerialName("TelematicsPlatform") val telematicsPlatform: String? = null,
+) {
+    /**
+     * True for GM OnStar / Ultium-based EVs (Acura ZDX, Honda Prologue)
+     * that use the ACURA EV CIG backend.
+     */
+    val isUltiumEv: Boolean
+        get() {
+            val combined = "$divisionName $modelCode ${aliasName.orEmpty()}".uppercase()
+            return combined.contains("ZDX") || combined.contains("PROLOGUE")
+        }
+
+    /**
+     * True for all supported EV and PHEV models (including Clarity Plug-In Hybrid).
+     */
+    val isEvOrPhev: Boolean
+        get() {
+            val combined = "$divisionName $modelCode ${aliasName.orEmpty()} ${telematicsPlatform.orEmpty()}".uppercase()
+            return isUltiumEv || combined.contains("EV") || combined.contains("CLARITY") || combined.contains("PHEV")
+        }
+}
 // endregion
 
 // region CIG Token
@@ -72,7 +92,42 @@ data class CigTokenResponseBody(
 
 // region Remote Commands
 @Serializable
-data class DashboardRequest(val device: String, val filters: List<String>)
+data class DashboardRequest(
+    val device: String,
+    val filters: List<String>? = null,
+)
+
+@Serializable
+data class DashboardLatestRequest(
+    val evInfoRequest: EvInfoRequest,
+) {
+    companion object {
+        fun forClarityPhev(useKilometers: Boolean = false, useCelsius: Boolean = false): DashboardLatestRequest =
+            DashboardLatestRequest(
+                evInfoRequest = EvInfoRequest(
+                    reqType = "all_info",
+                    setUnit = SetUnit(
+                        dist = if (useKilometers) "km" else "mile",
+                        temp = if (useCelsius) "C" else "F",
+                    ),
+                    smartChargeEnrolled = false,
+                ),
+            )
+    }
+}
+
+@Serializable
+data class EvInfoRequest(
+    val reqType: String,
+    val setUnit: SetUnit,
+    val smartChargeEnrolled: Boolean,
+)
+
+@Serializable
+data class SetUnit(
+    val dist: String,
+    val temp: String,
+)
 
 @Serializable
 data class DashboardResponse(

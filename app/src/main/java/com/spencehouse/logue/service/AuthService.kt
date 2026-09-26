@@ -35,48 +35,11 @@ class AuthService @Inject constructor(
 
         return try {
             Log.d(tag, "Starting login for $finalUsername")
-            // 1. Register Client
-            val regResp = identityApi.registerClient(
-                mapOf(
-                    "client_id" to Config.CLIENT_ID,
-                    "client_secret" to Config.CLIENT_SECRET
-                )
-            )
-            val clientRegKey = regResp.body()?.clientRegistrationKey?.clientRegKey
-                ?: return Result.failure(Exception("Failed to register client: ${regResp.code()}"))
-            Log.d(tag, "Client registered successfully")
-
-            // 2. Generate Token with retry
-            var attempt = 0
-            var tokenResp: Response<TokenResponse>? = null
-            while (attempt < 3) {
-                Log.d(tag, "Attempting to generate token, attempt ${attempt + 1}")
-                tokenResp = identityApi.generateToken(
-                    mapOf(
-                        "client_reg_key" to clientRegKey,
-                        "device_description" to "Android_Logue_Client",
-                        "username" to finalUsername,
-                        "password" to finalPassword
-                    )
-                )
-                if (tokenResp.isSuccessful) {
-                    break
-                }
-                Log.w(tag, "Token generation failed with code: ${tokenResp.code()}. Retrying in 1 second.")
-                delay(1.seconds)
-                attempt++
-            }
-
-            val tokenData = tokenResp?.body() ?: return Result.failure(Exception("Auth failed: ${tokenResp?.code()}"))
-            if (tokenData.requestStatus != "success") {
-                return Result.failure(Exception("Auth status: ${tokenData.requestStatus}"))
-            }
-
-            sessionManager.accessToken = tokenData.token.accessToken
-            sessionManager.hidasIdent = tokenData.user.hidasIdent
-            sessionManager.username = finalUsername
-            sessionManager.password = finalPassword
-            Log.d(tag, "Token generated and session saved")
+            authenticateWithClient(
+                username = finalUsername,
+                password = finalPassword,
+                useUltiumClient = true,
+            ).getOrElse { return Result.failure(it) }
 
             // 3. Get Vehicles
             val vehicleHeaders = Config.COMMON_HEADERS.toMutableMap().apply {
@@ -113,6 +76,12 @@ class AuthService @Inject constructor(
             sessionManager.vin = selectedVin
             Log.d(tag, "Selected VIN: $selectedVin")
 
+            val currentVehicle = getSelectedVehicle()
+            if (currentVehicle != null) {
+                sessionManager.saveSelectedVehicle(currentVehicle)
+                ensureAuthForVehicle(currentVehicle)
+            }
+
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(tag, "Login exception", e)
@@ -120,10 +89,108 @@ class AuthService @Inject constructor(
         }
     }
 
+    suspend fun ensureAuthForVehicle(vehicle: Vehicle): Result<Unit> {
+        val targetPlatform = if (vehicle.isUltiumEv) "ULTIUM" else "HONDALINK"
+        val hasValidSession = !sessionManager.accessToken.isNullOrEmpty() &&
+            !sessionManager.hidasIdent.isNullOrEmpty() &&
+            sessionManager.authPlatform == targetPlatform &&
+            (vehicle.isUltiumEv || !sessionManager.clientRegKey.isNullOrEmpty())
+
+        if (hasValidSession) {
+            return Result.success(Unit)
+        }
+
+        val finalUsername = sessionManager.username ?: return Result.failure(Exception("No username stored"))
+        val finalPassword = sessionManager.password ?: return Result.failure(Exception("No password stored"))
+
+        Log.d(tag, "Switching auth token to platform $targetPlatform for VIN ${vehicle.vin} (${vehicle.modelCode})")
+        return authenticateWithClient(
+            username = finalUsername,
+            password = finalPassword,
+            useUltiumClient = vehicle.isUltiumEv,
+        )
+    }
+
+    private suspend fun authenticateWithClient(
+        username: String,
+        password: String,
+        useUltiumClient: Boolean,
+    ): Result<Unit> {
+        val clientId = if (useUltiumClient) Config.CLIENT_ID else Config.HONDALINK_CLIENT_ID
+        val clientSecret = if (useUltiumClient) Config.CLIENT_SECRET else Config.HONDALINK_CLIENT_SECRET
+        val description = if (useUltiumClient) "Android_Logue_Client" else "Android"
+        val platformName = if (useUltiumClient) "ULTIUM" else "HONDALINK"
+
+        // 1. Register Client
+        val regResp = identityApi.registerClient(
+            mapOf(
+                "client_id" to clientId,
+                "client_secret" to clientSecret,
+            )
+        )
+        val clientRegKey = regResp.body()?.clientRegistrationKey?.clientRegKey
+            ?: return Result.failure(Exception("Failed to register client ($platformName): ${regResp.code()}"))
+        Log.d(tag, "Client registered successfully ($platformName)")
+
+        // 2. Generate Token with retry
+        var attempt = 0
+        var tokenResp: Response<TokenResponse>? = null
+        while (attempt < 3) {
+            Log.d(tag, "Attempting to generate token ($platformName), attempt ${attempt + 1}")
+            val tokenFields = if (useUltiumClient) {
+                mapOf(
+                    "client_reg_key" to clientRegKey,
+                    "device_description" to description,
+                    "username" to username,
+                    "password" to password,
+                )
+            } else {
+                mapOf(
+                    "client_reg_key" to clientRegKey,
+                    "description" to description,
+                    "device_description" to description,
+                    "username" to username,
+                    "password" to password,
+                )
+            }
+            tokenResp = identityApi.generateToken(tokenFields)
+            if (tokenResp.isSuccessful) {
+                break
+            }
+            Log.w(tag, "Token generation failed with code: ${tokenResp.code()}. Retrying in 1 second.")
+            delay(1.seconds)
+            attempt++
+        }
+
+        val tokenData = tokenResp?.body() ?: return Result.failure(Exception("Auth failed ($platformName): ${tokenResp?.code()}"))
+        if (tokenData.requestStatus != "success") {
+            return Result.failure(Exception("Auth status ($platformName): ${tokenData.requestStatus}"))
+        }
+
+        sessionManager.accessToken = tokenData.token.accessToken
+        sessionManager.hidasIdent = tokenData.user.hidasIdent
+        sessionManager.clientRegKey = clientRegKey
+        sessionManager.authPlatform = platformName
+        sessionManager.username = username
+        sessionManager.password = password
+        Log.d(tag, "Token generated and session saved for $platformName")
+        return Result.success(Unit)
+    }
+
     fun updateSelectedVin(vin: String) {
         this.selectedVin = vin
         sessionManager.vin = vin
+        vehicles.find { it.vin == vin }?.let { sessionManager.saveSelectedVehicle(it) }
         Log.d(tag, "Persistence updated for VIN: $vin")
+    }
+
+    fun getSelectedVehicle(vinOverride: String? = null): Vehicle? {
+        val targetVin = vinOverride ?: selectedVin ?: sessionManager.vin
+        val inMemory = vehicles.find { it.vin == targetVin } ?: vehicles.firstOrNull()
+        if (inMemory != null) {
+            return inMemory
+        }
+        return sessionManager.getSelectedVehicle(targetVin)
     }
 
     fun logout() {
@@ -134,7 +201,7 @@ class AuthService @Inject constructor(
     }
 
     fun getVehicleName(): String {
-        val vehicle = vehicles.find { it.vin == selectedVin } ?: vehicles.firstOrNull()
+        val vehicle = getSelectedVehicle()
         val name = vehicle?.aliasName ?: vehicle?.let { "${it.modelYear} ${it.divisionName} ${it.modelCode}" } ?: "Unknown Vehicle"
         Log.d(tag, "getVehicleName: $name (selectedVin: $selectedVin, vehicleCount: ${vehicles.size})")
         return name

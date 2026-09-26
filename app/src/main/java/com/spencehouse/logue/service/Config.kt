@@ -9,11 +9,21 @@ object Config {
     const val CLIENT_ID = "AcuraEVAndroidAppPrOd0083"
     const val CLIENT_SECRET = "q4w5hzeqkFVMPQaeKuil"
 
+    const val HONDALINK_CLIENT_ID = "HondaLinkAndroidApp0074"
+    const val HONDALINK_CLIENT_SECRET = "rETFrZcLyUycsSblksCP"
+
     val COMMON_HEADERS = mapOf(
         "hondaHeaderType.country_code" to "US",
         "hondaHeaderType.language_code" to "en",
         "hondaHeaderType.businessId" to "ACURA EV",
         "User-Agent" to "okhttp/4.12.0",
+    )
+
+    val HONDALINK_COMMON_HEADERS = mapOf(
+        "hondaHeaderType.country_code" to "US",
+        "hondaHeaderType.language_code" to "en",
+        "hondaHeaderType.businessId" to "HONDALINK CONNECT",
+        "User-Agent" to "HondaLink/5.0.51 (Android)",
     )
 
     val DASHBOARD_FILTERS = listOf(
@@ -34,5 +44,20 @@ object Config {
         "CHARGER POWER LEVEL",
         "HANDS FREE CALLING",
         "ENERGY EFFICIENCY",
+    )
+
+    val HONDALINK_DASHBOARD_FILTER_SETS: List<List<String>?> = listOf(
+        null,
+        listOf(
+            "VEHICLE RANGE",
+            "odometer",
+            "TIRE PRESSURE",
+        ),
+        listOf(
+            "DigitalTwin",
+            "VEHICLE RANGE",
+            "odometer",
+            "TIRE PRESSURE",
+        ),
     )
 }
