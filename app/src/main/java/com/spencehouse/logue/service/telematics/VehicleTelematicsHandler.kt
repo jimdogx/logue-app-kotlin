@@ -26,6 +26,8 @@ interface VehicleTelematicsHandler {
     suspend fun requestDashboard(vehicle: Vehicle): Result<DashboardRefreshResult>
     suspend fun startClimate(vehicle: Vehicle, pin: String, temperature: Int): Result<String>
     suspend fun stopClimate(vehicle: Vehicle, pin: String): Result<String>
+    suspend fun startCharging(vehicle: Vehicle, pin: String = ""): Result<String>
+    suspend fun stopCharging(vehicle: Vehicle, pin: String = ""): Result<String>
     suspend fun setTargetChargeLevel(vehicle: Vehicle, level: Int): Result<String?>
     suspend fun requestLightHorn(vehicle: Vehicle, pin: String, action: String): Result<String?>
     suspend fun requestStopLightHorn(vehicle: Vehicle, pin: String): Result<String?>

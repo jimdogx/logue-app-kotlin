@@ -17,15 +17,18 @@ import com.spencehouse.logue.service.remote.dto.TargetChargeLevelRequest
 import com.spencehouse.logue.service.remote.dto.Vehicle
 import com.spencehouse.logue.service.remote.dto.VehicleControl
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -48,10 +51,63 @@ class HondaLinkTelematicsHandler @Inject constructor(
 
     private val tag = "HondaLinkTelematicsHandler"
 
+    companion object {
+        private const val CLARITY_DEVICE_ID = "b7a5e8f0-1c2d-4e3f-9a8b-7c6d5e4f3a2b"
+    }
+
     private fun isClarityPhev(vehicle: Vehicle): Boolean =
         vehicle.modelCode.uppercase(Locale.US).contains("CLARITY")
 
-    private suspend fun getClarityGtcHeaders(vehicle: Vehicle): Result<Map<String, String>> {
+    private var claritySessionCookies: String? = null
+    private var clarityCookiesExpiryTime: Long = 0L
+
+    private suspend fun ensureClaritySessionCookies(): Result<String> {
+        val now = System.currentTimeMillis()
+        val cached = claritySessionCookies
+        if (cached != null && now < clarityCookiesExpiryTime) {
+            return Result.success(cached)
+        }
+
+        return try {
+            val todayGmt = SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("GMT")
+            }.format(Date())
+            val serviceSalt = "DL2mBuVQsT7d54c2xaDf94jYe8D35c2p"
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest((serviceSalt + todayGmt).toByteArray(Charsets.UTF_8))
+            val serviceKey = digest.joinToString("") { "%02x".format(it) }
+
+            val authHeaders = mapOf(
+                "X-Service-Key" to serviceKey,
+                "X-App-Id" to "hondalink.android",
+                "X-App-Version" to "1.0",
+                "X-Device-Id" to CLARITY_DEVICE_ID,
+                "User-Agent" to "okhttp/4.12.0",
+            )
+
+            val authResp = wscApi.getClarityVinServiceAuth(authHeaders)
+            if (!authResp.isSuccessful) {
+                return Result.failure(Exception("VinServiceAuth failed with code ${authResp.code()}"))
+            }
+
+            val setCookies = authResp.headers().values("Set-Cookie")
+            if (setCookies.isEmpty()) {
+                return Result.failure(Exception("VinServiceAuth returned no Set-Cookie headers"))
+            }
+
+            val cookieHeader = setCookies.map { it.substringBefore(";") }.joinToString("; ")
+            claritySessionCookies = cookieHeader
+            // Cache cookies for 12 hours (valid for 24h on server)
+            clarityCookiesExpiryTime = now + (12 * 60 * 60 * 1000L)
+            Log.d(tag, "Successfully obtained Clarity session cookies")
+            Result.success(cookieHeader)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to get Clarity VinServiceAuth cookies", e)
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun getClarityGtcHeaders(vehicle: Vehicle, cookies: String): Result<Map<String, String>> {
         authService.ensureAuthForVehicle(vehicle).onFailure { return Result.failure(it) }
         val accessToken = sessionManager.accessToken ?: return Result.failure(Exception("No access token"))
         val authDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
@@ -59,29 +115,59 @@ class HondaLinkTelematicsHandler @Inject constructor(
             mapOf(
                 "X-App-Id" to "com.honda.hondalink.connect",
                 "X-App-Version" to "5.4.4",
-                "X-Device-Id" to "b7a5e8f0-1c2d-4e3f-9a8b-7c6d5e4f3a2b",
+                "X-Device-Id" to CLARITY_DEVICE_ID,
                 "X-Vin-Auth-Date" to authDate,
                 "X-Vin" to vehicle.vin,
                 "BearerToken" to accessToken,
+                "Cookie" to cookies,
+                "User-Agent" to "okhttp/4.12.0",
             ),
         )
     }
 
     private suspend fun sendClarityRemoteCommand(vehicle: Vehicle, requestDataJson: String): Result<String> {
-        val headers = getClarityGtcHeaders(vehicle).getOrElse { return Result.failure(it) }
-        val resp = wscApi.registerClarityRemoteList(headers, requestDataJson, vehicle.vin)
-        val body = resp.body()
-        if (resp.isSuccessful && body != null) {
-            val resultStatus = body["rmt_data"]?.jsonObject?.get("result_status")?.jsonPrimitive?.content
-            Log.d(tag, "Clarity RegisterRemoteList response: $body (result_status=$resultStatus)")
-            return if (resultStatus == null || resultStatus == "000" || resultStatus == "001" || resultStatus == "010") {
-                Result.success(resultStatus ?: "CLARITY_REMOTE_OK")
-            } else {
-                Result.failure(Exception("Clarity remote command returned status $resultStatus"))
+        return try {
+            var cookies = ensureClaritySessionCookies().getOrElse { return Result.failure(it) }
+            var headers = getClarityGtcHeaders(vehicle, cookies).getOrElse { return Result.failure(it) }
+            var resp = wscApi.registerClarityRemoteList(headers, requestDataJson, vehicle.vin)
+
+            // If session expired or rejected (e.g., X-Status-Code: 803 or 401), re-authenticate cookies once
+            val statusCodeHeader = resp.headers()["X-Status-Code"]
+            if (statusCodeHeader == "803" || resp.code() == 401) {
+                Log.w(tag, "Clarity remote command received X-Status-Code $statusCodeHeader (${resp.code()}), re-authenticating cookies...")
+                claritySessionCookies = null
+                cookies = ensureClaritySessionCookies().getOrElse { return Result.failure(it) }
+                headers = getClarityGtcHeaders(vehicle, cookies).getOrElse { return Result.failure(it) }
+                resp = wscApi.registerClarityRemoteList(headers, requestDataJson, vehicle.vin)
             }
+
+            val rawBody = resp.body()?.string()
+            val errorBody = resp.errorBody()?.string()
+            val responseString = rawBody ?: errorBody ?: ""
+            Log.d(tag, "Clarity RegisterRemoteList response: HTTP ${resp.code()}, X-Status-Code=${resp.headers()["X-Status-Code"]}, body=$responseString")
+
+            if (resp.isSuccessful && responseString.isNotEmpty()) {
+                val json = try {
+                    Json.parseToJsonElement(responseString).jsonObject
+                } catch (e: Exception) {
+                    null
+                }
+                val rmtData = json?.get("rmt_data")?.jsonObject
+                val responseStatus = rmtData?.get("response")?.jsonPrimitive?.content
+                val resultStatus = rmtData?.get("result_status")?.jsonPrimitive?.content
+
+                if (responseStatus == "OK" || (resultStatus != null && resultStatus != "Failure")) {
+                    Result.success(resultStatus ?: "CLARITY_REMOTE_OK")
+                } else {
+                    Result.failure(Exception("Clarity remote command rejected: $responseString"))
+                }
+            } else {
+                Result.failure(Exception("Clarity remote command failed (${resp.code()} / ${resp.headers()["X-Status-Code"]}): $responseString"))
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Exception sending Clarity remote command", e)
+            Result.failure(e)
         }
-        val errorBody = resp.errorBody()?.string()
-        return Result.failure(Exception("Clarity remote command failed (${resp.code()}): $errorBody"))
     }
 
     private suspend fun getHondaLinkHeaders(
@@ -379,7 +465,11 @@ class HondaLinkTelematicsHandler @Inject constructor(
             Log.d(tag, "Starting HondaLink climate for VIN: $vin")
             if (isClarityPhev(vehicle)) {
                 val requestData = """{"VIN":"$vin","rmt_request":{"req_type":"start_acon","set_start_acon":{"acon_type":"force"}}}"""
-                return sendClarityRemoteCommand(vehicle, requestData)
+                val res = sendClarityRemoteCommand(vehicle, requestData)
+                if (res.isSuccess) {
+                    sessionManager.cachedClimateStatus = "ON"
+                }
+                return res
             }
             val headers = getHondaLinkHeaders(vehicle, messageId = "S-1").getOrElse {
                 return Result.failure(it)
@@ -409,7 +499,11 @@ class HondaLinkTelematicsHandler @Inject constructor(
             Log.d(tag, "Stopping HondaLink climate for VIN: $vin")
             if (isClarityPhev(vehicle)) {
                 val requestData = """{"VIN":"$vin","rmt_request":{"req_type":"stop_acon"}}"""
-                return sendClarityRemoteCommand(vehicle, requestData)
+                val res = sendClarityRemoteCommand(vehicle, requestData)
+                if (res.isSuccess) {
+                    sessionManager.cachedClimateStatus = "OFF"
+                }
+                return res
             }
             val headers = getHondaLinkHeaders(vehicle, messageId = "S-1").getOrElse {
                 return Result.failure(it)
@@ -428,6 +522,42 @@ class HondaLinkTelematicsHandler @Inject constructor(
                 val errorBody = resp.errorBody()?.string()
                 Result.failure(Exception("Stop climate failed: $errorBody"))
             }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun startCharging(vehicle: Vehicle, pin: String): Result<String> {
+        val vin = vehicle.vin
+        return try {
+            Log.d(tag, "Starting HondaLink charge for VIN: $vin")
+            if (isClarityPhev(vehicle)) {
+                val requestData = """{"VIN":"$vin","rmt_request":{"req_type":"start_charge"}}"""
+                val res = sendClarityRemoteCommand(vehicle, requestData)
+                if (res.isSuccess) {
+                    sessionManager.cachedChargeStatus = "Charging"
+                }
+                return res
+            }
+            Result.failure(Exception("Start charging not supported on this vehicle"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun stopCharging(vehicle: Vehicle, pin: String): Result<String> {
+        val vin = vehicle.vin
+        return try {
+            Log.d(tag, "Stopping HondaLink charge for VIN: $vin")
+            if (isClarityPhev(vehicle)) {
+                val requestData = """{"VIN":"$vin","rmt_request":{"req_type":"stop_charge"}}"""
+                val res = sendClarityRemoteCommand(vehicle, requestData)
+                if (res.isSuccess) {
+                    sessionManager.cachedChargeStatus = if (sessionManager.cachedIsPluggedIn) "Plugged In" else "Unplugged"
+                }
+                return res
+            }
+            Result.failure(Exception("Stop charging not supported on this vehicle"))
         } catch (e: Exception) {
             Result.failure(e)
         }

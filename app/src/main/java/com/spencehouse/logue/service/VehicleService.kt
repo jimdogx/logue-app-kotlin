@@ -69,6 +69,12 @@ class VehicleService @Inject constructor(
     suspend fun stopClimate(vehicle: Vehicle, pin: String): Result<String> =
         handlerFor(vehicle).stopClimate(vehicle, pin)
 
+    suspend fun startCharging(vehicle: Vehicle, pin: String = ""): Result<String> =
+        handlerFor(vehicle).startCharging(vehicle, pin)
+
+    suspend fun stopCharging(vehicle: Vehicle, pin: String = ""): Result<String> =
+        handlerFor(vehicle).stopCharging(vehicle, pin)
+
     suspend fun setTargetChargeLevel(vehicle: Vehicle, level: Int): Result<String?> =
         handlerFor(vehicle).setTargetChargeLevel(vehicle, level)
 
@@ -103,6 +109,12 @@ class VehicleService @Inject constructor(
 
     suspend fun stopClimate(vin: String, pin: String): Result<String> =
         stopClimate(resolveVehicle(vin), pin)
+
+    suspend fun startCharging(vin: String, pin: String = ""): Result<String> =
+        startCharging(resolveVehicle(vin), pin)
+
+    suspend fun stopCharging(vin: String, pin: String = ""): Result<String> =
+        stopCharging(resolveVehicle(vin), pin)
 
     suspend fun setTargetChargeLevel(vin: String, level: Int): Result<String?> =
         setTargetChargeLevel(resolveVehicle(vin), level)

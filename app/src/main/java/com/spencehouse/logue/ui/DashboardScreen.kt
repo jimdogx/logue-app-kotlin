@@ -58,6 +58,7 @@ fun DashboardScreen(
     val uiState = viewModel.uiState
     val selectedVehicle = uiState.vehicles.find { it.vin == uiState.selectedVin }
     val isClarityPhev = selectedVehicle?.modelCode?.uppercase()?.contains("CLARITY") == true ||
+        selectedVehicle?.modelCode?.uppercase()?.contains("PHEV") == true ||
         uiState.vehicleName.uppercase().contains("CLARITY")
     var showPinDialog by remember { mutableStateOf<Pair<String, (String) -> Unit>?>(null) }
     var showChargeDialog by remember { mutableStateOf(false) }
@@ -301,6 +302,22 @@ fun DashboardScreen(
                                 executeOrShowPin("Stop Climate") { pin -> viewModel.stopClimate(pin) }
                             }
                         )
+                    }
+
+                    // Charge Control Section (Clarity PHEV)
+                    if (isClarityPhev) {
+                        item {
+                            ChargeControl(
+                                chargeStatus = uiState.chargeStatus,
+                                isPluggedIn = uiState.isPluggedIn,
+                                onStartCharge = {
+                                    executeOrShowPin("Start Charging") { pin -> viewModel.startCharging(pin) }
+                                },
+                                onStopCharge = {
+                                    executeOrShowPin("Stop Charging") { pin -> viewModel.stopCharging(pin) }
+                                }
+                            )
+                        }
                     }
 
                     // Vehicle Location
@@ -641,6 +658,68 @@ fun ClimateControl(
                 Icon(Icons.Default.PowerSettingsNew, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(if (isOn) "STOP CLIMATE" else "START CLIMATE")
+            }
+        }
+    }
+}
+
+@Composable
+fun ChargeControl(
+    chargeStatus: String,
+    isPluggedIn: Boolean,
+    onStartCharge: () -> Unit,
+    onStopCharge: () -> Unit
+) {
+    val isCharging = chargeStatus.equals("Charging", ignoreCase = true)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Bolt,
+                        contentDescription = null,
+                        tint = if (isCharging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "CHARGING",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Text(
+                    text = chargeStatus,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isCharging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = { if (isCharging) onStopCharge() else onStartCharge() },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isCharging) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(
+                    if (isCharging) Icons.Default.PowerSettingsNew else Icons.Default.Bolt,
+                    contentDescription = null
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(if (isCharging) "STOP CHARGING" else "START CHARGING")
             }
         }
     }

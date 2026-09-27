@@ -335,6 +335,14 @@ class UltiumEvTelematicsHandler @Inject constructor(
         }
     }
 
+    override suspend fun startCharging(vehicle: Vehicle, pin: String): Result<String> {
+        return Result.failure(Exception("Start charging is not supported on this vehicle"))
+    }
+
+    override suspend fun stopCharging(vehicle: Vehicle, pin: String): Result<String> {
+        return Result.failure(Exception("Stop charging is not supported on this vehicle"))
+    }
+
     override suspend fun setTargetChargeLevel(vehicle: Vehicle, level: Int): Result<String?> {
         val vin = vehicle.vin
         val tag = "VehicleService.SetChargeTarget"

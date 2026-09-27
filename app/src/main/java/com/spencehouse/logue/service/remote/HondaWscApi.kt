@@ -2,6 +2,7 @@ package com.spencehouse.logue.service.remote
 
 import com.spencehouse.logue.service.remote.dto.*
 import kotlinx.serialization.json.JsonObject
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -109,12 +110,17 @@ interface HondaWscApi {
         @HeaderMap headers: Map<String, String>,
     ): Response<JsonObject>
 
+    @GET("https://www.jp.hondalink.com/api/VinServiceAuth")
+    suspend fun getClarityVinServiceAuth(
+        @HeaderMap headers: Map<String, String>,
+    ): Response<ResponseBody>
+
     @FormUrlEncoded
     @POST("https://www.jp.hondalink.com/api/GW/VinService/RegisterRemoteList")
     suspend fun registerClarityRemoteList(
         @HeaderMap headers: Map<String, String>,
         @Field("requestdata") requestData: String,
         @Field("VIN") vin: String,
-    ): Response<JsonObject>
+    ): Response<ResponseBody>
 }
 

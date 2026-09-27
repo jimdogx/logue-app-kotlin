@@ -46,6 +46,7 @@ class DashboardViewModel @Inject constructor(
     private var refreshJob: Job? = null
     private var carFinderPollingJob: Job? = null
     private var carLocationPollingJob: Job? = null
+    private var chargePollingJob: Job? = null
 
     var isRefreshing by mutableStateOf(value = false)
         private set
@@ -711,6 +712,40 @@ class DashboardViewModel @Inject constructor(
         )
     }
 
+    fun startCharging(pin: String = "") {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
+        viewModelScope.launch {
+            Log.i(tag, "Sending command: Start Charging")
+            updateStatus("Sending Start Charging command...")
+            val result = vehicleService.startCharging(vehicle, pin)
+            result.onSuccess {
+                Log.i(tag, "Start Charging command sent successfully")
+                updateStatus("Start Charging command sent!")
+                startChargePolling(targetIsCharging = true)
+            }.onFailure {
+                Log.e(tag, "Start Charging failed", it)
+                updateStatus("Start Charging failed: ${it.message}")
+            }
+        }
+    }
+
+    fun stopCharging(pin: String = "") {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
+        viewModelScope.launch {
+            Log.i(tag, "Sending command: Stop Charging")
+            updateStatus("Sending Stop Charging command...")
+            val result = vehicleService.stopCharging(vehicle, pin)
+            result.onSuccess {
+                Log.i(tag, "Stop Charging command sent successfully")
+                updateStatus("Stop Charging command sent!")
+                startChargePolling(targetIsCharging = false)
+            }.onFailure {
+                Log.e(tag, "Stop Charging failed", it)
+                updateStatus("Stop Charging failed: ${it.message}")
+            }
+        }
+    }
+
     fun toggleFlashLights(pin: String) {
         if (uiState.isFlashing) {
             stopFlashAndHorn(pin)
@@ -782,7 +817,28 @@ class DashboardViewModel @Inject constructor(
         refreshJob?.cancel()
         carFinderPollingJob?.cancel()
         carLocationPollingJob?.cancel()
+        chargePollingJob?.cancel()
         super.onCleared()
+    }
+
+    private fun startChargePolling(targetIsCharging: Boolean) {
+        chargePollingJob?.cancel()
+        chargePollingJob = viewModelScope.launch {
+            Log.d(tag, "Starting charge polling for targetIsCharging: $targetIsCharging")
+            for (i in 1..12) {
+                if (!isActive) return@launch
+                delay(3.seconds)
+                refreshData()
+                val isCharging = uiState.chargeStatus.equals("Charging", ignoreCase = true)
+                if (targetIsCharging == isCharging) {
+                    Log.i(tag, "Target charge status reached after $i polls")
+                    updateStatus(if (targetIsCharging) "Charging started." else "Charging stopped.")
+                    cancel()
+                    return@launch
+                }
+            }
+            Log.w(tag, "Charge polling timed out")
+        }
     }
 
     private fun startAggressivePolling(targetStatus: String) {
