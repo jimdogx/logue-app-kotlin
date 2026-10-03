@@ -18,6 +18,7 @@
 # Don't add the keystore to version control.
 # See https://developer.android.com/studio/publish/app-signing#secure-shared-keystore
 *.keystore
+*.jks
 keystore.properties
 
 # Other sensitive files
