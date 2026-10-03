@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
+import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -45,6 +46,7 @@ class DashboardViewModel @Inject constructor(
     private var refreshJob: Job? = null
     private var carFinderPollingJob: Job? = null
     private var carLocationPollingJob: Job? = null
+    private var chargePollingJob: Job? = null
 
     var isRefreshing by mutableStateOf(value = false)
         private set
@@ -92,19 +94,26 @@ class DashboardViewModel @Inject constructor(
     }
 
     private fun checkIfEv(name: String): Boolean {
-        val evModels = listOf("ZDX", "PROLOGUE", "EV")
+        val evModels = listOf("ZDX", "PROLOGUE", "EV", "CLARITY")
         return evModels.any { name.uppercase().contains(it) }
     }
 
     private fun connectMqtt() {
         val vin = authService.selectedVin
         if ((vin == null) || (!uiState.isEv)) return
+        val vehicle = vehicleService.resolveVehicle(vin)
+
+        if (!vehicle.isUltiumEv) {
+            Log.d(tag, "Vehicle ${vehicle.vin} (${vehicle.modelCode}) uses HondaLink HTTP telematics; skipping MQTT")
+            refreshData()
+            return
+        }
 
         viewModelScope.launch {
             try {
-                Log.d(tag, "Connecting MQTT for VIN: $vin")
+                Log.d(tag, "Connecting MQTT for VIN: ${vehicle.vin} (${vehicle.modelCode})")
                 updateStatus("Authenticating MQTT...")
-                val credsResult = vehicleService.getCigToken(vin)
+                val credsResult = vehicleService.getCigToken(vehicle)
                 val creds = credsResult.getOrElse {
                     Log.e(tag, "Failed to get CIG token", it)
                     val errorMsg = it.message ?: ""
@@ -122,7 +131,7 @@ class DashboardViewModel @Inject constructor(
                 updateStatus("Connecting to AWS IoT...")
                 mqttClient?.disconnect()
                 mqttClient = AwsMqttClient(
-                    vin = vin,
+                    vin = vehicle.vin,
                     cigToken = creds.token,
                     cigSignature = creds.tokenSignature,
                     onMessageCallback = { topic, payload ->
@@ -165,7 +174,7 @@ class DashboardViewModel @Inject constructor(
     }
 
     private fun updateVehicleLocationUi(data: JSONObject) {
-        val reported = data.optJSONObject("state")?.optJSONObject("reported") ?: return
+        val reported = data.optJSONObject("state")?.optJSONObject("reported") ?: data
         val rb = reported.optJSONObject("responseBody") ?: return
 
         Log.d(tag, "Updating UI with reported vehicle location data")
@@ -184,7 +193,7 @@ class DashboardViewModel @Inject constructor(
     }
 
     private fun updateCarFinderUi(data: JSONObject) {
-        val reported = data.optJSONObject("state")?.optJSONObject("reported") ?: return
+        val reported = data.optJSONObject("state")?.optJSONObject("reported") ?: data
         val rb = reported.optJSONObject("responseBody") ?: return
 
         Log.d(tag, "Updating UI with reported car finder data")
@@ -197,28 +206,86 @@ class DashboardViewModel @Inject constructor(
         )
     }
 
+    private fun parseDmsOrDecimal(raw: String?): Double? {
+        if (raw.isNullOrBlank()) return null
+        val trimmed = raw.trim()
+        trimmed.toDoubleOrNull()?.let { return it }
+        val sign = if (trimmed.startsWith("-")) -1.0 else 1.0
+        val parts = trimmed.removePrefix("+").removePrefix("-").split(",")
+        if (parts.size != 3) return null
+        val deg = parts[0].toDoubleOrNull() ?: return null
+        val min = parts[1].toDoubleOrNull() ?: return null
+        val sec = parts[2].toDoubleOrNull() ?: return null
+        return sign * (deg + (min / 60.0) + (sec / 3600.0))
+    }
+
     private fun updateDashboardUi(data: JSONObject) {
-        val reported = data.optJSONObject("state")?.optJSONObject("reported") ?: return
+        val reported = data.optJSONObject("state")?.optJSONObject("reported") ?: data
         val rb = reported.optJSONObject("responseBody") ?: return
 
-        Log.d(tag, "Updating UI with reported dashboard data")
+        val keysList = rb.keys().asSequence().toList()
+        Log.d(tag, "Updating UI with reported dashboard data. Keys: $keysList")
         val evStatus = rb.optJSONObject("evStatus")
+        val vehicleInfo = evStatus?.optJSONObject("vehicleInfo")
+        val fuelLevel = rb.optJSONObject("fuelLevel")
         val odometerData = rb.optJSONObject("odometer")
         val tireStatus = rb.optJSONObject("tireStatus")
         val chargeMode = rb.optJSONObject("getChargeMode")
         val chargeTime = rb.optJSONObject("hvBatteryChargeCompleteTime")
 
-        val battery = evStatus?.optInt("soc")
-        val rangeVal = evStatus?.optInt("evRange")
-        val chargeStatus = evStatus?.optString("chargeStatus")
-        val plugStatus = evStatus?.optString("plugStatus")
-        val chargeModeValue = evStatus?.optString("chargeMode")
+        val battery = vehicleInfo?.optJSONObject("soc")?.optString("value")?.toDoubleOrNull()?.roundToInt()
+            ?: evStatus?.optDouble("soc")?.takeIf { !it.isNaN() }?.toInt()
+            ?: rb.optJSONObject("batteryStatus")?.optDouble("soc")?.takeIf { !it.isNaN() }?.toInt()
+            ?: rb.optJSONObject("hvBattery")?.optDouble("soc")?.takeIf { !it.isNaN() }?.toInt()
+            ?: fuelLevel?.optJSONObject("currentLevel")?.optDouble("value")?.takeIf { !it.isNaN() }?.toInt()
+
+        val rangeVal = vehicleInfo?.optJSONObject("evRange")?.optString("value")?.toDoubleOrNull()?.roundToInt()
+            ?: evStatus?.optDouble("evRange")?.takeIf { !it.isNaN() }?.toInt()
+            ?: rb.optJSONObject("evRange")?.optDouble("value")?.takeIf { !it.isNaN() }?.toInt()
+            ?: rb.optJSONObject("evDriveRange")?.optDouble("value")?.takeIf { !it.isNaN() }?.toInt()
+            ?: fuelLevel?.optJSONObject("driveRange")?.optDouble("value")?.takeIf { !it.isNaN() }?.toInt()
+
+        val chargeStatus = vehicleInfo?.optJSONObject("chargeStatus")?.optString("value")?.takeIf { it.isNotEmpty() }
+            ?: evStatus?.optString("chargeStatus")?.takeIf { it.isNotEmpty() && !it.startsWith("{") }
+            ?: evStatus?.optString("chgStatus")?.takeIf { it.isNotEmpty() }
+        val plugStatus = vehicleInfo?.optJSONObject("plugStatus")?.optString("value")?.takeIf { it.isNotEmpty() }
+            ?: evStatus?.optString("plugStatus")?.takeIf { it.isNotEmpty() && !it.startsWith("{") }
+            ?: evStatus?.optString("evPlugin")?.takeIf { it.isNotEmpty() }
+        val chargeModeValue = vehicleInfo?.optJSONObject("chargeMode")?.takeIf { it.optBoolean("valid", false) }?.optString("value")?.takeIf { it.isNotEmpty() }
+            ?: evStatus?.optString("chargeMode")?.takeIf { it.isNotEmpty() && !it.startsWith("{") }
+            ?: evStatus?.optString("chargerVoltage")?.takeIf { it.isNotEmpty() }
 
         val targetLevel = chargeMode?.optJSONObject("generalAwayTargetChargeLevel")?.optInt("value") ?: 80
 
-        val isPluggedIn = (plugStatus?.lowercase() == "plugged") || (chargeStatus?.lowercase() == "charging")
+        val isPluggedIn = (plugStatus?.lowercase() == "plugged") ||
+            (plugStatus == "1") ||
+            (chargeStatus?.lowercase() == "charging") ||
+            (chargeStatus == "1")
 
         val (mainStatus, voltage) = formatChargeStatus(chargeStatus, plugStatus, chargeModeValue)
+
+        val latRaw = vehicleInfo?.optJSONObject("curPosLat")?.takeIf { it.optBoolean("valid", false) }?.optString("value")
+            ?: vehicleInfo?.optJSONObject("naviCurPosLat")?.takeIf { it.optBoolean("valid", false) }?.optString("value")
+        val lonRaw = vehicleInfo?.optJSONObject("curPosLon")?.takeIf { it.optBoolean("valid", false) }?.optString("value")
+            ?: vehicleInfo?.optJSONObject("naviCurPosLon")?.takeIf { it.optBoolean("valid", false) }?.optString("value")
+        val parsedLat = parseDmsOrDecimal(latRaw)
+        val parsedLon = parseDmsOrDecimal(lonRaw)
+        val updatedLocation = if (parsedLat != null && parsedLon != null && parsedLat != 0.0 && parsedLon != 0.0) {
+            VehicleLocation(parsedLat, parsedLon, System.currentTimeMillis() / 1000)
+        } else {
+            uiState.vehicleLocation
+        }
+
+        val acRaw = vehicleInfo?.optJSONObject("acStatus")?.takeIf { it.optBoolean("valid", false) }?.optString("value")
+        val updatedClimate = when (acRaw?.lowercase()) {
+            "1", "on" -> "ON"
+            "0", "off" -> "OFF"
+            else -> uiState.climateStatus
+        }
+
+        val odometerVal = odometerData?.optString("value")?.toDoubleOrNull()?.roundToInt()
+            ?: odometerData?.optInt("value")?.takeIf { it > 0 }
+            ?: uiState.odometer
 
         authService.sessionManager.cachedBatteryPercentage = battery ?: -1
         authService.sessionManager.cachedRange = rangeVal ?: -1
@@ -227,15 +294,17 @@ class DashboardViewModel @Inject constructor(
         authService.sessionManager.targetChargeLevel = targetLevel
 
         uiState = uiState.copy(
-            batteryPercentage = battery,
-            range = rangeVal,
+            batteryPercentage = battery ?: uiState.batteryPercentage,
+            range = rangeVal ?: uiState.range,
             chargeStatus = mainStatus,
             chargeVoltage = voltage,
             chargeCompletionTime = formatTime(chargeTime),
             isPluggedIn = isPluggedIn,
             targetChargeLevel = targetLevel,
-            odometer = odometerData?.optInt("value"),
-            tirePressures = parseTires(tireStatus),
+            odometer = odometerVal,
+            tirePressures = if (tireStatus != null) parseTires(tireStatus) else uiState.tirePressures,
+            vehicleLocation = updatedLocation,
+            climateStatus = updatedClimate,
             lastUpdated = SimpleDateFormat("hh:mm:ss a", Locale.getDefault()).format(Date()),
             statusText = "Data Received"
         )
@@ -300,7 +369,7 @@ class DashboardViewModel @Inject constructor(
         val status = chargeStatus?.lowercase()
         val pStatus = plugStatus?.lowercase()
 
-        val isPluggedIn = (pStatus == "plugged") || (status == "charging")
+        val isPluggedIn = (pStatus == "plugged") || (pStatus == "1") || (status == "charging") || (status == "1")
 
         if (!isPluggedIn) {
             return "Unplugged" to null
@@ -308,15 +377,16 @@ class DashboardViewModel @Inject constructor(
 
         var mainStatus = "Plugged In"
         when (status) {
-            "charging" -> mainStatus = "Charging"
+            "charging", "1" -> mainStatus = "Charging"
             "complete" -> mainStatus = "Complete"
         }
 
         val chargeModeInt = chargeMode?.toIntOrNull()
-        val voltage = if (chargeModeInt != null && chargeModeInt > 0) {
-            "${chargeModeInt}V"
-        } else {
-            null
+        val voltage = when {
+            chargeModeInt == 1 -> "120V"
+            chargeModeInt == 2 -> "240V"
+            chargeModeInt != null && chargeModeInt > 2 -> "${chargeModeInt}V"
+            else -> null
         }
 
         return mainStatus to voltage
@@ -333,27 +403,36 @@ class DashboardViewModel @Inject constructor(
 
     fun refreshData(): Job {
         val vin = authService.selectedVin ?: return viewModelScope.launch {}
+        val vehicle = vehicleService.resolveVehicle(vin)
 
         if (!uiState.isEv) return viewModelScope.launch {}
 
         return viewModelScope.launch {
             isRefreshing = true
-            Log.d(tag, "Refreshing data and checking connection for VIN: $vin")
+            Log.d(tag, "Refreshing data and checking connection for VIN: ${vehicle.vin} (${vehicle.modelCode})")
 
             if (uiState.isEv) {
-                // Reconnect if status indicates an error or disconnect
-                if (uiState.statusText.contains("Error") || uiState.statusText.contains("lost")) {
+                // Reconnect if status indicates an error or disconnect (only for Ultium MQTT vehicles)
+                if (vehicle.isUltiumEv && (uiState.statusText.contains("Error") || uiState.statusText.contains("lost"))) {
                     connectMqtt()
                 }
 
                 updateStatus("Requesting update...")
-                val result = vehicleService.requestDashboard(vin)
-                result.onFailure {
+                val result = vehicleService.requestDashboardRefresh(vehicle)
+                result.onSuccess { refreshResult ->
+                    refreshResult.directPayloadJson?.let { payloadJson ->
+                        try {
+                            updateDashboardUi(JSONObject(payloadJson))
+                        } catch (e: Exception) {
+                            Log.e(tag, "Failed to parse direct dashboard JSON", e)
+                        }
+                    }
+                }.onFailure {
                     Log.e(tag, "Manual dashboard request failed", it)
                     val errorMsg = it.message ?: ""
                     if (errorMsg.contains("Unable to resolve host")) {
                         updateStatus("Network Error. Check connection.")
-                    } else if (errorMsg.contains("scope is invalid")) {
+                    } else if (errorMsg.contains("scope is invalid") && vehicle.isUltiumEv) {
                         updateStatus("Not an EV. OnStar must be active.")
                         uiState = uiState.copy(isEv = false)
                     } else {
@@ -364,19 +443,19 @@ class DashboardViewModel @Inject constructor(
                 updateStatus("Not an EV. OnStar must be active.")
             }
 
-            val climateResult = vehicleService.getClimateStatus(vin)
+            val climateResult = vehicleService.getClimateStatus(vehicle)
             climateResult.onSuccess {
                 val status = it.jsonObject["climateStatus"]?.jsonPrimitive?.content ?: "OFF"
                 Log.d(tag, "Climate status received: $status")
                 authService.sessionManager.cachedClimateStatus = status.uppercase()
-                val mappedVehicles = authService.vehicles.map { vehicle ->
+                val mappedVehicles = authService.vehicles.map { v ->
                     VehicleUiModel(
-                        vin = vehicle.vin,
-                        modelYear = vehicle.modelYear,
-                        divisionName = vehicle.divisionName,
-                        modelCode = vehicle.modelCode,
-                        aliasName = vehicle.aliasName,
-                        asset34FrontPath = vehicle.asset34FrontPath
+                        vin = v.vin,
+                        modelYear = v.modelYear,
+                        divisionName = v.divisionName,
+                        modelCode = v.modelCode,
+                        aliasName = v.aliasName,
+                        asset34FrontPath = v.asset34FrontPath
                     )
                 }
                 Log.d(tag, "Mapped vehicles in refreshData: $mappedVehicles")
@@ -472,10 +551,11 @@ class DashboardViewModel @Inject constructor(
     fun setTargetChargeLevel(level: Int) {
         val vin = authService.selectedVin ?: return
         if (!uiState.isEv) return
+        val vehicle = vehicleService.resolveVehicle(vin)
 
         viewModelScope.launch {
             Log.d(tag, "Setting target charge level to $level%")
-            vehicleService.setTargetChargeLevel(vin, level)
+            vehicleService.setTargetChargeLevel(vehicle, level)
             refreshData()
         }
     }
@@ -500,10 +580,11 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun requestVehicleLocation(pin: String) {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
         viewModelScope.launch {
             val result = sendCommand(
                 "Vehicle Location",
-                { p -> vehicleService.requestVehicleLocation(authService.selectedVin!!, p) },
+                { p -> vehicleService.requestVehicleLocation(vehicle, p) },
                 pin
             )
             result.onSuccess {
@@ -542,6 +623,8 @@ class DashboardViewModel @Inject constructor(
             val result = sendCommand(name, action, pin)
             result.onSuccess {
                 startCarFinderPolling(targetIsOff)
+            }.onFailure {
+                uiState = uiState.copy(isFlashing = false, isHonking = false)
             }
         }
     }
@@ -609,19 +692,59 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
-    fun startClimate(pin: String, temp: Int) = sendCommandWithPolling(
-        "Start Climate",
-        { p -> vehicleService.startClimate(authService.selectedVin!!, p, temp) },
-        pin,
-        "ON"
-    )
+    fun startClimate(pin: String, temp: Int) {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
+        sendCommandWithPolling(
+            "Start Climate",
+            { p -> vehicleService.startClimate(vehicle, p, temp) },
+            pin,
+            "ON"
+        )
+    }
 
-    fun stopClimate(pin: String) = sendCommandWithPolling(
-        "Stop Climate",
-        { p -> vehicleService.stopClimate(authService.selectedVin!!, p) },
-        pin,
-        "OFF"
-    )
+    fun stopClimate(pin: String) {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
+        sendCommandWithPolling(
+            "Stop Climate",
+            { p -> vehicleService.stopClimate(vehicle, p) },
+            pin,
+            "OFF"
+        )
+    }
+
+    fun startCharging(pin: String = "") {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
+        viewModelScope.launch {
+            Log.i(tag, "Sending command: Start Charging")
+            updateStatus("Sending Start Charging command...")
+            val result = vehicleService.startCharging(vehicle, pin)
+            result.onSuccess {
+                Log.i(tag, "Start Charging command sent successfully")
+                updateStatus("Start Charging command sent!")
+                startChargePolling(targetIsCharging = true)
+            }.onFailure {
+                Log.e(tag, "Start Charging failed", it)
+                updateStatus("Start Charging failed: ${it.message}")
+            }
+        }
+    }
+
+    fun stopCharging(pin: String = "") {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
+        viewModelScope.launch {
+            Log.i(tag, "Sending command: Stop Charging")
+            updateStatus("Sending Stop Charging command...")
+            val result = vehicleService.stopCharging(vehicle, pin)
+            result.onSuccess {
+                Log.i(tag, "Stop Charging command sent successfully")
+                updateStatus("Stop Charging command sent!")
+                startChargePolling(targetIsCharging = false)
+            }.onFailure {
+                Log.e(tag, "Stop Charging failed", it)
+                updateStatus("Stop Charging failed: ${it.message}")
+            }
+        }
+    }
 
     fun toggleFlashLights(pin: String) {
         if (uiState.isFlashing) {
@@ -640,45 +763,50 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun flashLights(pin: String) {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
         uiState = uiState.copy(isFlashing = true)
         sendCarFinderCommand(
             "Flash Lights",
-            { p -> vehicleService.requestLightHorn(authService.selectedVin!!, p, "lgt") },
+            { p -> vehicleService.requestLightHorn(vehicle, p, "lgt") },
             pin
         )
     }
 
     fun soundHorn(pin: String) {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
         uiState = uiState.copy(isHonking = true)
         sendCarFinderCommand(
             "Sound Horn",
-            { p -> vehicleService.requestLightHorn(authService.selectedVin!!, p, "hrn") },
+            { p -> vehicleService.requestLightHorn(vehicle, p, "hrn") },
             pin
         )
     }
 
     fun stopFlashAndHorn(pin: String) {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
         uiState = uiState.copy(isFlashing = false, isHonking = false)
         sendCarFinderCommand(
             "Stop Flash and Horn",
-            { p -> vehicleService.requestStopLightHorn(authService.selectedVin!!, p) },
+            { p -> vehicleService.requestStopLightHorn(vehicle, p) },
             pin,
             targetIsOff = true
         )
     }
 
     fun lockDoors(pin: String) {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
         viewModelScope.launch {
             sendCommand("Lock Doors", { p ->
-                vehicleService.requestDoorLock(authService.selectedVin!!, p, "alk")
+                vehicleService.requestDoorLock(vehicle, p, "alk")
             }, pin)
         }
     }
 
     fun unlockDoors(pin: String) {
+        val vehicle = vehicleService.resolveVehicle(authService.selectedVin ?: return)
         viewModelScope.launch {
             sendCommand("Unlock Doors", { p ->
-                vehicleService.requestDoorLock(authService.selectedVin!!, p, "dulk")
+                vehicleService.requestDoorLock(vehicle, p, "dulk")
             }, pin)
         }
     }
@@ -689,7 +817,28 @@ class DashboardViewModel @Inject constructor(
         refreshJob?.cancel()
         carFinderPollingJob?.cancel()
         carLocationPollingJob?.cancel()
+        chargePollingJob?.cancel()
         super.onCleared()
+    }
+
+    private fun startChargePolling(targetIsCharging: Boolean) {
+        chargePollingJob?.cancel()
+        chargePollingJob = viewModelScope.launch {
+            Log.d(tag, "Starting charge polling for targetIsCharging: $targetIsCharging")
+            for (i in 1..12) {
+                if (!isActive) return@launch
+                delay(3.seconds)
+                refreshData()
+                val isCharging = uiState.chargeStatus.equals("Charging", ignoreCase = true)
+                if (targetIsCharging == isCharging) {
+                    Log.i(tag, "Target charge status reached after $i polls")
+                    updateStatus(if (targetIsCharging) "Charging started." else "Charging stopped.")
+                    cancel()
+                    return@launch
+                }
+            }
+            Log.w(tag, "Charge polling timed out")
+        }
     }
 
     private fun startAggressivePolling(targetStatus: String) {

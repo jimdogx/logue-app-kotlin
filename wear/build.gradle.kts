@@ -65,3 +65,12 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+tasks.matching { it.name.startsWith("install") }.configureEach {
+    onlyIf {
+        gradle.startParameter.taskNames.any { taskName ->
+            taskName.contains(":wear:") || taskName.startsWith("wear:")
+        }
+    }
+}
+

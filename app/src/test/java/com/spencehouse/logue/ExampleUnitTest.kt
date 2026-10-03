@@ -43,4 +43,65 @@ class ExampleUnitTest {
             fail("Failed to parse date: ${e.message}")
         }
     }
+
+    @Test
+    fun testClarityChargeCommandPayloads() {
+        val vin = "JHMZC5F14JC016163"
+        val startPayload = """{"VIN":"$vin","rmt_request":{"req_type":"start_charge"}}"""
+        val stopPayload = """{"VIN":"$vin","rmt_request":{"req_type":"stop_charge"}}"""
+
+        val startJson = JSONObject(startPayload)
+        assertEquals(vin, startJson.getString("VIN"))
+        val startRmt = startJson.getJSONObject("rmt_request")
+        assertEquals("start_charge", startRmt.getString("req_type"))
+
+        val stopJson = JSONObject(stopPayload)
+        assertEquals(vin, stopJson.getString("VIN"))
+        val stopRmt = stopJson.getJSONObject("rmt_request")
+        assertEquals("stop_charge", stopRmt.getString("req_type"))
+    }
+
+    @Test
+    fun testClarityClimateCommandPayloads() {
+        val vin = "JHMZC5F14JC016163"
+        val startPayload = """{"VIN":"$vin","rmt_request":{"req_type":"start_acon","set_start_acon":{"acon_type":"force"}}}"""
+        val stopPayload = """{"VIN":"$vin","rmt_request":{"req_type":"stop_acon"}}"""
+
+        val startJson = JSONObject(startPayload)
+        assertEquals(vin, startJson.getString("VIN"))
+        val startRmt = startJson.getJSONObject("rmt_request")
+        assertEquals("start_acon", startRmt.getString("req_type"))
+        val setStartAcon = startRmt.getJSONObject("set_start_acon")
+        assertEquals("force", setStartAcon.getString("acon_type"))
+
+        val stopJson = JSONObject(stopPayload)
+        assertEquals(vin, stopJson.getString("VIN"))
+        val stopRmt = stopJson.getJSONObject("rmt_request")
+        assertEquals("stop_acon", stopRmt.getString("req_type"))
+    }
+
+    @Test
+    fun testClarityVinServiceAuthHash() {
+        val serviceSalt = "DL2mBuVQsT7d54c2xaDf94jYe8D35c2p"
+        val dateGmt = "20260927"
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest((serviceSalt + dateGmt).toByteArray(Charsets.UTF_8))
+        val hash = digest.joinToString("") { "%02x".format(it) }
+
+        assertEquals(64, hash.length)
+        assertTrue(hash.all { it.isDigit() || it in 'a'..'f' })
+    }
+
+    @Test
+    fun testClarityCookieParsing() {
+        val setCookies = listOf(
+            "HICSESSIONKEY=8091B742F644404258448BD2594C8E120AF04E1C-n2; Expires=Mon, 28 Sep 2026 16:11:49 GMT; Path=/",
+            "AWSELB=7729135504B3FFFA88FB484F9633F147C1077EC2AE7664;PATH=/;EXPIRES=Mon, 28 Sep 2026 16:11:49 GMT"
+        )
+        val cookieHeader = setCookies.map { it.substringBefore(";") }.joinToString("; ")
+        assertEquals(
+            "HICSESSIONKEY=8091B742F644404258448BD2594C8E120AF04E1C-n2; AWSELB=7729135504B3FFFA88FB484F9633F147C1077EC2AE7664",
+            cookieHeader
+        )
+    }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.spencehouse.logue.service.remote.dto.Vehicle
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -57,6 +58,61 @@ class SessionManager @Inject constructor(@ApplicationContext context: Context) {
         get() = sharedPreferences.getString("hidas_ident", null)
         set(value) = sharedPreferences.edit { putString("hidas_ident", value) }
 
+    var clientRegKey: String?
+        get() = sharedPreferences.getString("client_reg_key", null)
+        set(value) = sharedPreferences.edit { putString("client_reg_key", value) }
+
+    var authPlatform: String?
+        get() = sharedPreferences.getString("auth_platform", null)
+        set(value) = sharedPreferences.edit { putString("auth_platform", value) }
+
+    var selectedModelYear: String?
+        get() = sharedPreferences.getString("selected_model_year", null)
+        set(value) = sharedPreferences.edit { putString("selected_model_year", value) }
+
+    var selectedDivisionName: String?
+        get() = sharedPreferences.getString("selected_division_name", null)
+        set(value) = sharedPreferences.edit { putString("selected_division_name", value) }
+
+    var selectedModelCode: String?
+        get() = sharedPreferences.getString("selected_model_code", null)
+        set(value) = sharedPreferences.edit { putString("selected_model_code", value) }
+
+    var selectedAliasName: String?
+        get() = sharedPreferences.getString("selected_alias_name", null)
+        set(value) = sharedPreferences.edit { putString("selected_alias_name", value) }
+
+    var selectedAsset34FrontPath: String?
+        get() = sharedPreferences.getString("selected_asset_34_front_path", null)
+        set(value) = sharedPreferences.edit { putString("selected_asset_34_front_path", value) }
+
+    var selectedTelematicsPlatform: String?
+        get() = sharedPreferences.getString("selected_telematics_platform", null)
+        set(value) = sharedPreferences.edit { putString("selected_telematics_platform", value) }
+
+    fun saveSelectedVehicle(vehicle: Vehicle) {
+        vin = vehicle.vin
+        selectedModelYear = vehicle.modelYear
+        selectedDivisionName = vehicle.divisionName
+        selectedModelCode = vehicle.modelCode
+        selectedAliasName = vehicle.aliasName
+        selectedAsset34FrontPath = vehicle.asset34FrontPath
+        selectedTelematicsPlatform = vehicle.telematicsPlatform
+    }
+
+    fun getSelectedVehicle(vinOverride: String? = null): Vehicle? {
+        val targetVin = vinOverride ?: vin ?: return null
+        val modelCode = selectedModelCode ?: return null
+        return Vehicle(
+            vin = targetVin,
+            modelYear = selectedModelYear.orEmpty(),
+            divisionName = selectedDivisionName.orEmpty(),
+            modelCode = modelCode,
+            aliasName = selectedAliasName,
+            asset34FrontPath = selectedAsset34FrontPath,
+            telematicsPlatform = selectedTelematicsPlatform,
+        )
+    }
 
     fun logout() {
         sharedPreferences.edit { clear() }

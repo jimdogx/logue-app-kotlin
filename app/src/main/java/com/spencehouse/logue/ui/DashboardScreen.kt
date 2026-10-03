@@ -56,6 +56,10 @@ fun DashboardScreen(
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
     val uiState = viewModel.uiState
+    val selectedVehicle = uiState.vehicles.find { it.vin == uiState.selectedVin }
+    val isClarityPhev = selectedVehicle?.modelCode?.uppercase()?.contains("CLARITY") == true ||
+        selectedVehicle?.modelCode?.uppercase()?.contains("PHEV") == true ||
+        uiState.vehicleName.uppercase().contains("CLARITY")
     var showPinDialog by remember { mutableStateOf<Pair<String, (String) -> Unit>?>(null) }
     var showChargeDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -64,7 +68,9 @@ fun DashboardScreen(
     val imageLoader = EntryPointAccessors.fromApplication(context, ImageLoaderEntryPoint::class.java).imageLoader()
 
     val executeOrShowPin = { actionName: String, onConfirm: (String) -> Unit ->
-        if (uiState.savedPin?.isNotEmpty() == true) {
+        if (isClarityPhev) {
+            onConfirm(uiState.savedPin ?: "")
+        } else if (uiState.savedPin?.isNotEmpty() == true) {
             onConfirm(uiState.savedPin)
         } else {
             showPinDialog = actionName to onConfirm
@@ -87,7 +93,6 @@ fun DashboardScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.clickable { expanded = true }
                         ) {
-                            val selectedVehicle = uiState.vehicles.find { it.vin == uiState.selectedVin }
                             Log.d("DashboardScreen", "Selected vehicle image URL: ${selectedVehicle?.asset34FrontPath}")
                             if (selectedVehicle?.asset34FrontPath != null) {
                                 AsyncImage(
@@ -259,26 +264,29 @@ fun DashboardScreen(
                             chargeVoltage = uiState.chargeVoltage,
                             chargeCompletionTime = uiState.chargeCompletionTime,
                             isPluggedIn = uiState.isPluggedIn,
+                            showTargetLimit = !isClarityPhev,
                             onSettingsClick = { showChargeDialog = true }
                         )
                     }
 
-                    // Remote Commands
-                    item {
-                        RemoteCommands(
-                            isFlashing = uiState.isFlashing,
-                            isHonking = uiState.isHonking,
-                            onLock = { executeOrShowPin("Lock Doors") { pin -> viewModel.lockDoors(pin) } },
-                            onUnlock = { executeOrShowPin("Unlock Doors") { pin -> viewModel.unlockDoors(pin) } },
-                            onLights = {
-                                val action = if (uiState.isFlashing) "Stop Lights" else "Flash Lights"
-                                executeOrShowPin(action) { pin -> viewModel.toggleFlashLights(pin) }
-                            },
-                            onHorn = {
-                                val action = if (uiState.isHonking) "Stop Horn" else "Sound Horn"
-                                executeOrShowPin(action) { pin -> viewModel.toggleSoundHorn(pin) }
-                            }
-                        )
+                    // Remote Commands (Not supported on Clarity PHEV hardware)
+                    if (!isClarityPhev) {
+                        item {
+                            RemoteCommands(
+                                isFlashing = uiState.isFlashing,
+                                isHonking = uiState.isHonking,
+                                onLock = { executeOrShowPin("Lock Doors") { pin -> viewModel.lockDoors(pin) } },
+                                onUnlock = { executeOrShowPin("Unlock Doors") { pin -> viewModel.unlockDoors(pin) } },
+                                onLights = {
+                                    val action = if (uiState.isFlashing) "Stop Lights" else "Flash Lights"
+                                    executeOrShowPin(action) { pin -> viewModel.toggleFlashLights(pin) }
+                                },
+                                onHorn = {
+                                    val action = if (uiState.isHonking) "Stop Horn" else "Sound Horn"
+                                    executeOrShowPin(action) { pin -> viewModel.toggleSoundHorn(pin) }
+                                }
+                            )
+                        }
                     }
 
                     // Climate Section
@@ -286,6 +294,7 @@ fun DashboardScreen(
                         ClimateControl(
                             status = uiState.climateStatus,
                             useCelsius = uiState.useCelsius,
+                            showTemperaturePicker = !isClarityPhev,
                             onStart = { temp ->
                                 executeOrShowPin("Start Climate") { pin -> viewModel.startClimate(pin, temp) }
                             },
@@ -293,6 +302,22 @@ fun DashboardScreen(
                                 executeOrShowPin("Stop Climate") { pin -> viewModel.stopClimate(pin) }
                             }
                         )
+                    }
+
+                    // Charge Control Section (Clarity PHEV)
+                    if (isClarityPhev) {
+                        item {
+                            ChargeControl(
+                                chargeStatus = uiState.chargeStatus,
+                                isPluggedIn = uiState.isPluggedIn,
+                                onStartCharge = {
+                                    executeOrShowPin("Start Charging") { pin -> viewModel.startCharging(pin) }
+                                },
+                                onStopCharge = {
+                                    executeOrShowPin("Stop Charging") { pin -> viewModel.stopCharging(pin) }
+                                }
+                            )
+                        }
                     }
 
                     // Vehicle Location
@@ -310,9 +335,11 @@ fun DashboardScreen(
                         )
                     }
 
-                    // Tire Pressure
-                    item {
-                        TirePressureSection(uiState.tirePressures, uiState.useKpa)
+                    // Tire Pressure (Not supported on Clarity PHEV hardware)
+                    if (!isClarityPhev) {
+                        item {
+                            TirePressureSection(uiState.tirePressures, uiState.useKpa)
+                        }
                     }
 
                     item {
@@ -380,6 +407,7 @@ fun VehicleStatusCard(
     chargeVoltage: String?,
     chargeCompletionTime: String?,
     isPluggedIn: Boolean,
+    showTargetLimit: Boolean = true,
     onSettingsClick: () -> Unit
 ) {
     val batteryColor = when {
@@ -412,32 +440,34 @@ fun VehicleStatusCard(
                     fontWeight = FontWeight.Bold
                 )
 
-                val angle = (targetLimit / 100f) * 360f
-                val radians = Math.toRadians(angle.toDouble() - 90)
-                val radius = 71
-                val x = (radius * cos(radians)).toFloat()
-                val y = (radius * sin(radians)).toFloat()
+                if (showTargetLimit) {
+                    val angle = (targetLimit / 100f) * 360f
+                    val radians = Math.toRadians(angle.toDouble() - 90)
+                    val radius = 71
+                    val x = (radius * cos(radians)).toFloat()
+                    val y = (radius * sin(radians)).toFloat()
 
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .offset(x.dp, y.dp)
-                        .border(
-                            2.dp,
-                            MaterialTheme.colorScheme.onSurface,
-                            CircleShape
-                        )
-                ) {
-                    Icon(
-                        Icons.Default.Bolt,
-                        contentDescription = "Charge Target",
-                        tint = MaterialTheme.colorScheme.onSurface,
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
                         modifier = Modifier
-                            .size(20.dp)
-                            .padding(2.dp)
-                    )
+                            .size(24.dp)
+                            .offset(x.dp, y.dp)
+                            .border(
+                                2.dp,
+                                MaterialTheme.colorScheme.onSurface,
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            Icons.Default.Bolt,
+                            contentDescription = "Charge Target",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .padding(2.dp)
+                        )
+                    }
                 }
             }
 
@@ -463,16 +493,18 @@ fun VehicleStatusCard(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Target", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "$targetLimit%",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        IconButton(onClick = onSettingsClick, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Settings, contentDescription = "Charge Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (showTargetLimit) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Target", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "$targetLimit%",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            IconButton(onClick = onSettingsClick, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Settings, contentDescription = "Charge Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -578,7 +610,13 @@ fun CommandButton(
 }
 
 @Composable
-fun ClimateControl(status: String, useCelsius: Boolean, onStart: (Int) -> Unit, onStop: () -> Unit) {
+fun ClimateControl(
+    status: String,
+    useCelsius: Boolean,
+    showTemperaturePicker: Boolean = true,
+    onStart: (Int) -> Unit,
+    onStop: () -> Unit
+) {
     var temp by remember(useCelsius) { mutableIntStateOf(if (useCelsius) 22 else 72) }
     val isOn = status != "OFF"
 
@@ -594,16 +632,18 @@ fun ClimateControl(status: String, useCelsius: Boolean, onStart: (Int) -> Unit, 
                 Text("CLIMATE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            if (showTemperaturePicker) {
+                Spacer(modifier = Modifier.height(16.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { temp-- }) { Icon(Icons.Default.Remove, contentDescription = "Decrease temperature") }
-                Text("$temp${if (useCelsius) "°C" else "°F"}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-                IconButton(onClick = { temp++ }) { Icon(Icons.Default.Add, contentDescription = "Increase temperature") }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { temp-- }) { Icon(Icons.Default.Remove, contentDescription = "Decrease temperature") }
+                    Text("$temp${if (useCelsius) "°C" else "°F"}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = { temp++ }) { Icon(Icons.Default.Add, contentDescription = "Increase temperature") }
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -618,6 +658,68 @@ fun ClimateControl(status: String, useCelsius: Boolean, onStart: (Int) -> Unit, 
                 Icon(Icons.Default.PowerSettingsNew, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(if (isOn) "STOP CLIMATE" else "START CLIMATE")
+            }
+        }
+    }
+}
+
+@Composable
+fun ChargeControl(
+    chargeStatus: String,
+    isPluggedIn: Boolean,
+    onStartCharge: () -> Unit,
+    onStopCharge: () -> Unit
+) {
+    val isCharging = chargeStatus.equals("Charging", ignoreCase = true)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Bolt,
+                        contentDescription = null,
+                        tint = if (isCharging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "CHARGING",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Text(
+                    text = chargeStatus,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isCharging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = { if (isCharging) onStopCharge() else onStartCharge() },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isCharging) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(
+                    if (isCharging) Icons.Default.PowerSettingsNew else Icons.Default.Bolt,
+                    contentDescription = null
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(if (isCharging) "STOP CHARGING" else "START CHARGING")
             }
         }
     }

@@ -40,6 +40,10 @@ class VehicleUpdateWorker @AssistedInject constructor(
         }
 
         try {
+            if (authService.getSelectedVehicle(vin) == null) {
+                Log.d(tag, "Vehicle metadata not loaded yet for $vin, performing silent login first")
+                authService.login()
+            }
             val result = vehicleService.getDashboardData(vin)
             result.onSuccess { data ->
                 Log.d(tag, "Successfully fetched dashboard data in background: $data")
