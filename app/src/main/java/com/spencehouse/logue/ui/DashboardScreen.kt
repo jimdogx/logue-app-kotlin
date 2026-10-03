@@ -2,14 +2,17 @@ package com.spencehouse.logue.ui
 
 import android.annotation.SuppressLint
 import android.util.Log
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
@@ -63,6 +66,7 @@ fun DashboardScreen(
     var showPinDialog by remember { mutableStateOf<Pair<String, (String) -> Unit>?>(null) }
     var showChargeDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirmDialog by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val imageLoader = EntryPointAccessors.fromApplication(context, ImageLoaderEntryPoint::class.java).imageLoader()
@@ -166,12 +170,15 @@ fun DashboardScreen(
                         }
                     }
 
-                    Row {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { viewModel.refreshData() }) {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.onSurface)
                         }
                         IconButton(onClick = { showSettingsDialog = true }) {
-                            Icon(Icons.Default.Info, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurface)
+                            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                        IconButton(onClick = { showLogoutConfirmDialog = true }) {
+                            Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Sign Out", tint = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 }
@@ -222,6 +229,22 @@ fun DashboardScreen(
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.primary
                         )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        OutlinedButton(
+                            onClick = { showLogoutConfirmDialog = true },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ExitToApp,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Sign Out")
+                        }
                     }
                 }
             } else {
@@ -343,6 +366,27 @@ fun DashboardScreen(
                     }
 
                     item {
+                        OutlinedButton(
+                            onClick = { showLogoutConfirmDialog = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ExitToApp,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Sign Out")
+                        }
+                    }
+
+                    item {
                         Spacer(modifier = Modifier.height(24.dp))
                     }
                 }
@@ -386,10 +430,35 @@ fun DashboardScreen(
             onUseKpaChange = { viewModel.toggleKpa(it) },
             onDeletePin = { viewModel.setPin(null) },
             onLogout = {
-                viewModel.logout()
-                onLogout()
+                showSettingsDialog = false
+                showLogoutConfirmDialog = true
             },
             onDismiss = { showSettingsDialog = false }
+        )
+    }
+
+    if (showLogoutConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirmDialog = false },
+            title = { Text("Sign Out") },
+            text = { Text("Are you sure you want to sign out? You will need to re-enter your HondaLink credentials to sign back in.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutConfirmDialog = false
+                        viewModel.logout()
+                        onLogout()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Sign Out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }
@@ -936,7 +1005,7 @@ fun SettingsDialog(
         onDismissRequest = onDismiss,
         title = { Text("Settings & Info") },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
