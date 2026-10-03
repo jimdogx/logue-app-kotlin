@@ -82,6 +82,21 @@ esac
 
 CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
+if [ "$darwin" = "true" ]; then
+    # Android Gradle Plugin and Kotlin KAPT require Java <= 21.
+    # If JAVA_HOME is unset or set to an incompatible version (> 21),
+    # fallback to Android Studio's bundled JBR if available.
+    if [ -d "/Applications/Android Studio.app/Contents/jbr/Contents/Home" ]; then
+        if [ -n "$JAVA_HOME" ]; then
+            JAVA_VER=$("$JAVA_HOME/bin/java" -version 2>&1 | sed -E -n 's/.*version "([0-9]+).*/\1/p')
+            if [ -n "$JAVA_VER" ] && [ "$JAVA_VER" -gt 21 ] 2>/dev/null; then
+                JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+            fi
+        else
+            JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+        fi
+    fi
+fi
 
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
