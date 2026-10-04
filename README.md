@@ -12,7 +12,7 @@ This project stands on the shoulders of giants:
 - **[Relink](https://get-relink.app/)**: An iOS app by reddit user **ThierryBuc** that served as as inspiration for this project.
 
 
-## Features
+## Features (varies by model)
 
 ### Real-Time Dashboard
 - **Battery & Range**: Instant visibility into State of Charge (SoC) and remaining EV range.
@@ -36,7 +36,7 @@ This project stands on the shoulders of giants:
 
 ### Option 1: Install the Android APK (Recommended)
 The easiest way to get Logue on your device is to download the latest release:
-1.  Navigate to the **[Releases](https://github.com/mcspencehouse/logue-app-kotlin/releases)** page of this repository.
+1.  Navigate to the **[Releases](https://github.com/jimdogx/logue-app-kotlin/releases)** page of this repository.
 2.  Download the `.apk` file to your Android device.
 3.  Open the file and follow the prompts to install. 
     *Note: You may need to enable "Install from unknown sources" in your device settings.*
