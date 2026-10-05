@@ -5,6 +5,7 @@ Logue is a mobile-first companion application for Honda and Acura EV owners. It 
 <p align="center">
   <img src="assets/screenshot.png" alt="Logue App Screenshot" width="400">
   <img src="assets/screenshot-2.png" alt="Logue App Clarity Screenshot" width="400">
+  <img src="assets/screenshot-3.png" alt="Logue App Clarity Screenshot" width="400">
 </p>
 
 ## Credits & Inspiration
