@@ -82,6 +82,7 @@ class DashboardViewModel @Inject constructor(
                 useKilometers = authService.sessionManager.useKilometers,
                 useKpa = authService.sessionManager.useKpa,
                 savedPin = authService.sessionManager.pin,
+                gasRange = authService.sessionManager.cachedGasRange.takeIf { it >= 0 },
             )
 
             if (isEv) {
@@ -245,6 +246,9 @@ class DashboardViewModel @Inject constructor(
             ?: rb.optJSONObject("evDriveRange")?.optDouble("value")?.takeIf { !it.isNaN() }?.toInt()
             ?: fuelLevel?.optJSONObject("driveRange")?.optDouble("value")?.takeIf { !it.isNaN() }?.toInt()
 
+        val gasRangeVal = vehicleInfo?.optJSONObject("petRange")?.optString("value")?.toDoubleOrNull()?.roundToInt()
+            ?: fuelLevel?.optJSONObject("driveRange")?.optDouble("value")?.takeIf { !it.isNaN() }?.toInt()
+
         val chargeStatus = vehicleInfo?.optJSONObject("chargeStatus")?.optString("value")?.takeIf { it.isNotEmpty() }
             ?: evStatus?.optString("chargeStatus")?.takeIf { it.isNotEmpty() && !it.startsWith("{") }
             ?: evStatus?.optString("chgStatus")?.takeIf { it.isNotEmpty() }
@@ -289,6 +293,9 @@ class DashboardViewModel @Inject constructor(
 
         authService.sessionManager.cachedBatteryPercentage = battery ?: -1
         authService.sessionManager.cachedRange = rangeVal ?: -1
+        if (gasRangeVal != null) {
+            authService.sessionManager.cachedGasRange = gasRangeVal
+        }
         authService.sessionManager.cachedChargeStatus = mainStatus
         authService.sessionManager.cachedIsPluggedIn = isPluggedIn
         authService.sessionManager.targetChargeLevel = targetLevel
@@ -296,6 +303,7 @@ class DashboardViewModel @Inject constructor(
         uiState = uiState.copy(
             batteryPercentage = battery ?: uiState.batteryPercentage,
             range = rangeVal ?: uiState.range,
+            gasRange = gasRangeVal ?: uiState.gasRange,
             chargeStatus = mainStatus,
             chargeVoltage = voltage,
             chargeCompletionTime = formatTime(chargeTime),
@@ -533,6 +541,7 @@ class DashboardViewModel @Inject constructor(
             isEv = isEv,
             batteryPercentage = null,
             range = null,
+            gasRange = null,
             statusText = if (isEv) "Switching vehicles..." else "Not an EV. OnStar must be active.",
             vehicles = mappedVehicles
         )

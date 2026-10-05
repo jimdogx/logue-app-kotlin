@@ -280,6 +280,7 @@ fun DashboardScreen(
                         VehicleStatusCard(
                             percentage = uiState.batteryPercentage ?: 0,
                             range = uiState.range ?: 0,
+                            gasRange = uiState.gasRange,
                             odometer = uiState.odometer ?: 0,
                             targetLimit = uiState.targetChargeLevel,
                             useKilometers = uiState.useKilometers,
@@ -469,6 +470,7 @@ fun DashboardScreen(
 fun VehicleStatusCard(
     percentage: Int,
     range: Int,
+    gasRange: Int? = null,
     odometer: Int,
     targetLimit: Int,
     useKilometers: Boolean,
@@ -542,11 +544,33 @@ fun VehicleStatusCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Text(
-                text = "${if (useKilometers) "${(range * 1.609).toInt()} km" else "$range miles"} range",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            if (gasRange != null && gasRange > 0) {
+                val totalRange = range + gasRange
+                val totalText = if (useKilometers) "${(totalRange * 1.609).toInt()} km total range" else "$totalRange miles total range"
+                val evText = if (useKilometers) "${(range * 1.609).toInt()} km electric" else "$range mi electric"
+                val gasText = if (useKilometers) "${(gasRange * 1.609).toInt()} km gas" else "$gasRange mi gas"
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = totalText,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "$evText · $gasText",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                Text(
+                    text = "${if (useKilometers) "${(range * 1.609).toInt()} km" else "$range miles"} range",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 
