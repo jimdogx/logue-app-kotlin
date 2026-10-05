@@ -149,4 +149,12 @@ class SessionManager @Inject constructor(@ApplicationContext context: Context) {
     var cachedVoltage: Int
         get() = sharedPreferences.getInt("cached_voltage", -1)
         set(value) = sharedPreferences.edit { putInt("cached_voltage", value) }
+
+    fun getWeeklyChargeScheduleJson(vin: String): String? {
+        return sharedPreferences.getString("weekly_charge_schedule_$vin", null)
+    }
+
+    fun saveWeeklyChargeScheduleJson(vin: String, json: String) {
+        sharedPreferences.edit { putString("weekly_charge_schedule_$vin", json) }
+    }
 }

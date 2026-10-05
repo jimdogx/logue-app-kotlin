@@ -43,4 +43,5 @@ data class DashboardUiState(
     val isHonking: Boolean = false,
     val vehicleLocation: VehicleLocation? = null,
     val vehicleLocationError: String? = null,
+    val scheduledChargeSummary: String? = null,
 )

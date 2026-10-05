@@ -12,6 +12,7 @@ import com.spencehouse.logue.service.AuthService
 import com.spencehouse.logue.service.VehicleService
 import com.spencehouse.logue.service.WearableSyncManager
 import com.spencehouse.logue.service.mqtt.AwsMqttClient
+import com.spencehouse.logue.service.schedule.ScheduledChargeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -36,6 +37,7 @@ class DashboardViewModel @Inject constructor(
     private val authService: AuthService,
     private val vehicleService: VehicleService,
     private val wearableSyncManager: WearableSyncManager,
+    private val scheduledChargeManager: ScheduledChargeManager,
 ) : ViewModel() {
 
     private val tag = "DashboardViewModel"
@@ -83,6 +85,7 @@ class DashboardViewModel @Inject constructor(
                 useKpa = authService.sessionManager.useKpa,
                 savedPin = authService.sessionManager.pin,
                 gasRange = authService.sessionManager.cachedGasRange.takeIf { it >= 0 },
+                scheduledChargeSummary = authService.selectedVin?.let { scheduledChargeManager.getScheduleSummary(it) },
             )
 
             if (isEv) {
@@ -543,12 +546,20 @@ class DashboardViewModel @Inject constructor(
             range = null,
             gasRange = null,
             statusText = if (isEv) "Switching vehicles..." else "Not an EV. OnStar must be active.",
-            vehicles = mappedVehicles
+            vehicles = mappedVehicles,
+            scheduledChargeSummary = scheduledChargeManager.getScheduleSummary(vin),
         )
 
         if (isEv) {
             connectMqtt()
         }
+    }
+
+    fun refreshScheduleSummary() {
+        val vin = authService.selectedVin ?: return
+        uiState = uiState.copy(
+            scheduledChargeSummary = scheduledChargeManager.getScheduleSummary(vin)
+        )
     }
 
     fun logout() {

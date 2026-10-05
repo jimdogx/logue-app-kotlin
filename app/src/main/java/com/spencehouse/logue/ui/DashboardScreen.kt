@@ -56,9 +56,14 @@ import kotlin.math.sin
 @Composable
 fun DashboardScreen(
     onLogout: () -> Unit,
+    onNavigateToScheduleCharging: () -> Unit = {},
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
     val uiState = viewModel.uiState
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshScheduleSummary()
+    }
     val selectedVehicle = uiState.vehicles.find { it.vin == uiState.selectedVin }
     val isClarityPhev = selectedVehicle?.modelCode?.uppercase()?.contains("CLARITY") == true ||
         selectedVehicle?.modelCode?.uppercase()?.contains("PHEV") == true ||
@@ -334,12 +339,14 @@ fun DashboardScreen(
                             ChargeControl(
                                 chargeStatus = uiState.chargeStatus,
                                 isPluggedIn = uiState.isPluggedIn,
+                                scheduleSummary = uiState.scheduledChargeSummary,
                                 onStartCharge = {
                                     executeOrShowPin("Start Charging") { pin -> viewModel.startCharging(pin) }
                                 },
                                 onStopCharge = {
                                     executeOrShowPin("Stop Charging") { pin -> viewModel.stopCharging(pin) }
-                                }
+                                },
+                                onScheduleCharge = onNavigateToScheduleCharging,
                             )
                         }
                     }
@@ -760,8 +767,10 @@ fun ClimateControl(
 fun ChargeControl(
     chargeStatus: String,
     isPluggedIn: Boolean,
+    scheduleSummary: String? = null,
     onStartCharge: () -> Unit,
-    onStopCharge: () -> Unit
+    onStopCharge: () -> Unit,
+    onScheduleCharge: () -> Unit = {}
 ) {
     val isCharging = chargeStatus.equals("Charging", ignoreCase = true)
 
@@ -813,6 +822,44 @@ fun ChargeControl(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(if (isCharging) "STOP CHARGING" else "START CHARGING")
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OutlinedButton(
+                onClick = onScheduleCharge,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    Icons.Default.Schedule,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("SCHEDULE CHARGING")
+            }
+
+            if (!scheduleSummary.isNullOrEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.AccessTime,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = scheduleSummary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
     }

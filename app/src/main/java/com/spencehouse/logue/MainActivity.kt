@@ -63,6 +63,16 @@ fun LogueAppNavigation(isLoggedIn: Boolean) {
                         popUpTo("dashboard") { inclusive = true }
                     }
                 },
+                onNavigateToScheduleCharging = {
+                    navController.navigate("schedule_charging")
+                }
+            )
+        }
+        composable("schedule_charging") {
+            com.spencehouse.logue.ui.ScheduledChargingScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
             )
         }
     }
