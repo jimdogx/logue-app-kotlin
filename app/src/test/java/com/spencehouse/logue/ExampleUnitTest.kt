@@ -104,4 +104,38 @@ class ExampleUnitTest {
             cookieHeader
         )
     }
+
+    @Test
+    fun testClarityPetRangeParsing() {
+        val payload = """
+            {
+              "status": "success",
+              "responseBody": {
+                "evStatus": {
+                  "vehicleInfo": {
+                    "soc": {"unit": "%", "valid": true, "value": "100.0"},
+                    "evRange": {"unit": "mile", "valid": true, "value": "49"},
+                    "petRange": {"unit": "mile", "valid": true, "value": "62"}
+                  }
+                },
+                "fuelLevel": {
+                  "currentLevel": {"value": "30", "unit": "%"}
+                }
+              }
+            }
+        """.trimIndent()
+
+        val json = JSONObject(payload)
+        val rb = json.getJSONObject("responseBody")
+        val vehicleInfo = rb.getJSONObject("evStatus").getJSONObject("vehicleInfo")
+
+        val battery = vehicleInfo.optJSONObject("soc")?.optString("value")?.toDoubleOrNull()?.toInt()
+        val evRange = vehicleInfo.optJSONObject("evRange")?.optString("value")?.toDoubleOrNull()?.toInt()
+        val gasRange = vehicleInfo.optJSONObject("petRange")?.optString("value")?.toDoubleOrNull()?.toInt()
+
+        assertEquals(100, battery)
+        assertEquals(49, evRange)
+        assertEquals(62, gasRange)
+        assertEquals(111, (evRange ?: 0) + (gasRange ?: 0))
+    }
 }

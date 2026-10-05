@@ -262,8 +262,9 @@ class HondaLinkTelematicsHandler @Inject constructor(
                 onSuccess = {
                     val bat = sessionManager.cachedBatteryPercentage
                     val rng = sessionManager.cachedRange
+                    val gasRng = sessionManager.cachedGasRange.takeIf { it >= 0 }
                     if (bat >= 0 && rng >= 0) {
-                        Result.success(DashboardData(bat, rng))
+                        Result.success(DashboardData(bat, rng, gasRng))
                     } else {
                         Result.failure(Exception("Dashboard refresh triggered (${it.requestId}), awaiting telemetry update"))
                     }
@@ -297,6 +298,9 @@ class HondaLinkTelematicsHandler @Inject constructor(
                 ?: responseBody["evDriveRange"]?.jsonObject?.get("value")?.jsonPrimitive?.doubleOrNull?.roundToInt()
                 ?: fuelLevel?.get("driveRange")?.jsonObject?.get("value")?.jsonPrimitive?.doubleOrNull?.roundToInt()
 
+            val gasRange = vehicleInfo?.get("petRange")?.jsonObject?.get("value")?.jsonPrimitive?.doubleOrNull?.roundToInt()
+                ?: fuelLevel?.get("driveRange")?.jsonObject?.get("value")?.jsonPrimitive?.doubleOrNull?.roundToInt()
+
             val plugRaw = vehicleInfo?.get("plugStatus")?.jsonObject?.get("value")?.jsonPrimitive?.content
                 ?: evStatus["plugStatus"]?.jsonPrimitive?.content
                 ?: evStatus["evPlugin"]?.jsonPrimitive?.content
@@ -326,10 +330,14 @@ class HondaLinkTelematicsHandler @Inject constructor(
                 }
             }
 
+            if (gasRange != null) {
+                sessionManager.cachedGasRange = gasRange
+            }
+
             if (battery != null && range != null) {
                 sessionManager.cachedBatteryPercentage = battery
                 sessionManager.cachedRange = range
-                DashboardData(battery, range)
+                DashboardData(battery, range, gasRange)
             } else {
                 null
             }

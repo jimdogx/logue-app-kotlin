@@ -14,6 +14,7 @@ import javax.inject.Singleton
 data class DashboardData(
     val batteryPercentage: Int,
     val range: Int,
+    val gasRange: Int? = null,
 )
 
 /**

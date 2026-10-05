@@ -126,6 +126,10 @@ class SessionManager @Inject constructor(@ApplicationContext context: Context) {
         get() = sharedPreferences.getInt("cached_range", -1)
         set(value) = sharedPreferences.edit { putInt("cached_range", value) }
 
+    var cachedGasRange: Int
+        get() = sharedPreferences.getInt("cached_gas_range", -1)
+        set(value) = sharedPreferences.edit { putInt("cached_gas_range", value) }
+
     var cachedChargeStatus: String?
         get() = sharedPreferences.getString("cached_charge_status", null)
         set(value) = sharedPreferences.edit { putString("cached_charge_status", value) }

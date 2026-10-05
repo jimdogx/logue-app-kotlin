@@ -22,6 +22,7 @@ data class DashboardUiState(
     val isEv: Boolean = true,
     val batteryPercentage: Int? = null,
     val range: Int? = null,
+    val gasRange: Int? = null,
     val chargeStatus: String = "--",
     val chargeVoltage: String? = null,
     val chargeCompletionTime: String? = null,
