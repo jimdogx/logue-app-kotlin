@@ -1,13 +1,16 @@
 package com.spencehouse.logue.service.schedule
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
 import com.spencehouse.logue.MainActivity
 import com.spencehouse.logue.R
@@ -173,17 +176,22 @@ class ScheduledChargeManager @Inject constructor(
             vehicleService.stopCharging(vehicle)
         }
 
+        val schedule = getSchedule(vin)
         result.onSuccess {
             Log.i(TAG, "Scheduled $action charge successfully executed for $vin: $it")
-            sendNotification(action, isSuccess = true, vehicleName = vehicleName)
+            if (schedule.notificationsEnabled) {
+                sendNotification(action, isSuccess = true, vehicleName = vehicleName)
+            }
         }.onFailure {
             Log.e(TAG, "Scheduled $action charge failed for $vin", it)
-            sendNotification(
-                action = action,
-                isSuccess = false,
-                errorMessage = it.message,
-                vehicleName = vehicleName,
-            )
+            if (schedule.notificationsEnabled) {
+                sendNotification(
+                    action = action,
+                    isSuccess = false,
+                    errorMessage = it.message,
+                    vehicleName = vehicleName,
+                )
+            }
         }
 
         // Re-schedule for the next upcoming event
@@ -207,8 +215,22 @@ class ScheduledChargeManager @Inject constructor(
         val actionText = if (nextEvent.action == ChargeAction.START) "Start" else "Stop"
         val cal = Calendar.getInstance().apply { timeInMillis = nextEvent.triggerTimeMillis }
         val timeStr = android.text.format.DateFormat.getTimeFormat(context).format(cal.time)
-        val dayStr = getShortDayName(cal.get(Calendar.DAY_OF_WEEK))
-        return "Next: $dayStr $timeStr ($actionText)"
+
+        val nowCal = Calendar.getInstance()
+        val isToday = nowCal.get(Calendar.YEAR) == cal.get(Calendar.YEAR) &&
+                nowCal.get(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR)
+
+        val tomorrowCal = (nowCal.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+        val isTomorrow = tomorrowCal.get(Calendar.YEAR) == cal.get(Calendar.YEAR) &&
+                tomorrowCal.get(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR)
+
+        val dayLabel = when {
+            isToday -> "Today"
+            isTomorrow -> "Tomorrow"
+            else -> getShortDayName(cal.get(Calendar.DAY_OF_WEEK))
+        }
+
+        return "Next: $dayLabel at $timeStr ($actionText)"
     }
 
     private fun sendNotification(
@@ -217,6 +239,13 @@ class ScheduledChargeManager @Inject constructor(
         errorMessage: String? = null,
         vehicleName: String = "Vehicle",
     ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "POST_NOTIFICATIONS permission not granted, skipping notification")
+                return
+            }
+        }
+
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP

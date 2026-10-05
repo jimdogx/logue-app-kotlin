@@ -78,6 +78,11 @@ class ScheduledChargingViewModel @Inject constructor(
         )
     }
 
+    fun setNotificationsEnabled(enabled: Boolean) {
+        val updated = uiState.schedule.copy(notificationsEnabled = enabled)
+        uiState = uiState.copy(schedule = updated)
+    }
+
     fun setDayEnabled(dayOfWeek: Int, enabled: Boolean) {
         val updatedDays = uiState.schedule.days.map { day ->
             if (day.dayOfWeek == dayOfWeek) day.copy(enabled = enabled) else day
@@ -129,6 +134,20 @@ class ScheduledChargingViewModel @Inject constructor(
         )
     }
 
+    fun setStartEnabled(dayOfWeek: Int, enabled: Boolean) {
+        val updatedDays = uiState.schedule.days.map { day ->
+            if (day.dayOfWeek == dayOfWeek) day.copy(startEnabled = enabled) else day
+        }
+        uiState = uiState.copy(schedule = uiState.schedule.copy(days = updatedDays))
+    }
+
+    fun setStopEnabled(dayOfWeek: Int, enabled: Boolean) {
+        val updatedDays = uiState.schedule.days.map { day ->
+            if (day.dayOfWeek == dayOfWeek) day.copy(stopEnabled = enabled) else day
+        }
+        uiState = uiState.copy(schedule = uiState.schedule.copy(days = updatedDays))
+    }
+
     fun applyPreset(preset: SchedulePreset) {
         val currentDays = uiState.schedule.days
         val updatedDays = when (preset) {
@@ -146,14 +165,17 @@ class ScheduledChargingViewModel @Inject constructor(
                 if (sun != null) {
                     currentDays.map { day ->
                         day.copy(
+                            enabled = true,
                             startHour = sun.startHour,
                             startMinute = sun.startMinute,
                             stopHour = sun.stopHour,
                             stopMinute = sun.stopMinute,
+                            startEnabled = sun.startEnabled,
+                            stopEnabled = sun.stopEnabled,
                         )
                     }
                 } else {
-                    currentDays
+                    currentDays.map { it.copy(enabled = true) }
                 }
             }
         }

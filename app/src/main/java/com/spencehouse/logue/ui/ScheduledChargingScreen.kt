@@ -1,6 +1,15 @@
 package com.spencehouse.logue.ui
 
+import android.Manifest
+import android.app.AlarmManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,7 +31,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.spencehouse.logue.service.schedule.DaySchedule
 import com.spencehouse.logue.service.schedule.formatDurationText
 import com.spencehouse.logue.service.schedule.getDayName
@@ -48,7 +61,39 @@ fun ScheduledChargingScreen(
 ) {
     val uiState = viewModel.uiState
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { isGranted ->
+        viewModel.setNotificationsEnabled(isGranted)
+    }
+
+    val alarmManager = remember { context.getSystemService(Context.ALARM_SERVICE) as AlarmManager }
+    var canScheduleExact by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                alarmManager.canScheduleExactAlarms()
+            } else {
+                true
+            },
+        )
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    canScheduleExact = alarmManager.canScheduleExactAlarms()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     LaunchedEffect(uiState.saveSuccess) {
         if (uiState.saveSuccess) {
@@ -110,6 +155,60 @@ fun ScheduledChargingScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(vertical = 16.dp),
         ) {
+            // Alarm Permission Banner (if Android 12+ and not granted)
+            if (!canScheduleExact) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                        ),
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Exact Alarm Permission Needed",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                "To ensure your vehicle starts and stops charging at the exact minute while your phone is asleep, please allow 'Alarms & reminders' for Logue in system settings.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                            data = Uri.parse("package:${context.packageName}")
+                                        }
+                                        context.startActivity(intent)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error,
+                                    contentColor = MaterialTheme.colorScheme.onError,
+                                ),
+                            ) {
+                                Text("Open Settings")
+                            }
+                        }
+                    }
+                }
+            }
+
             // Master Switch & Status Card
             item {
                 Card(
@@ -211,6 +310,92 @@ fun ScheduledChargingScreen(
                 }
             }
 
+            // Command Notifications Toggle Card
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (uiState.schedule.notificationsEnabled) {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        },
+                    ),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (uiState.schedule.notificationsEnabled) {
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                                        },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    if (uiState.schedule.notificationsEnabled) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
+                                    contentDescription = null,
+                                    tint = if (uiState.schedule.notificationsEnabled) {
+                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    "Command Notifications",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    if (uiState.schedule.notificationsEnabled) {
+                                        "Notify when Start/Stop commands are sent"
+                                    } else {
+                                        "Command notifications disabled"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = uiState.schedule.notificationsEnabled,
+                            onCheckedChange = { enable ->
+                                if (enable) {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        viewModel.setNotificationsEnabled(true)
+                                    }
+                                } else {
+                                    viewModel.setNotificationsEnabled(false)
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+
             // Quick Presets
             item {
                 Card(
@@ -254,7 +439,7 @@ fun ScheduledChargingScreen(
                         ) {
                             Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Copy Sunday's Times To All Days", style = MaterialTheme.typography.labelMedium)
+                            Text("Copy Sunday to All Days (Enables All)", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -277,6 +462,8 @@ fun ScheduledChargingScreen(
                     isScheduleEnabled = uiState.schedule.isScheduleEnabled,
                     context = context,
                     onToggleEnabled = { viewModel.setDayEnabled(day.dayOfWeek, it) },
+                    onToggleStartEnabled = { viewModel.setStartEnabled(day.dayOfWeek, it) },
+                    onToggleStopEnabled = { viewModel.setStopEnabled(day.dayOfWeek, it) },
                     onEditStartTime = { viewModel.openTimePicker(day.dayOfWeek, TimePickerType.START) },
                     onEditStopTime = { viewModel.openTimePicker(day.dayOfWeek, TimePickerType.STOP) },
                 )
@@ -325,15 +512,11 @@ private fun DayScheduleCard(
     isScheduleEnabled: Boolean,
     context: Context,
     onToggleEnabled: (Boolean) -> Unit,
+    onToggleStartEnabled: (Boolean) -> Unit,
+    onToggleStopEnabled: (Boolean) -> Unit,
     onEditStartTime: () -> Unit,
     onEditStopTime: () -> Unit,
 ) {
-    val enabledColor = if (day.enabled && isScheduleEnabled) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-    }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -399,38 +582,69 @@ private fun DayScheduleCard(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = onEditStartTime),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                            .clickable(enabled = day.startEnabled, onClick = onEditStartTime),
+                        color = if (day.startEnabled) {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (day.startEnabled) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                        ),
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Bolt,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    "START",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold,
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Bolt,
+                                        contentDescription = null,
+                                        tint = if (day.startEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "START",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (day.startEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                                Checkbox(
+                                    checked = day.startEnabled,
+                                    onCheckedChange = onToggleStartEnabled,
+                                    modifier = Modifier.size(20.dp),
                                 )
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = formatTime(context, day.startHour, day.startMinute),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Text(
-                                text = "Tap to edit",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            if (day.startEnabled) {
+                                Text(
+                                    text = formatTime(context, day.startHour, day.startMinute),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = "Tap to edit",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                )
+                            } else {
+                                Text(
+                                    text = "Disabled",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                )
+                                Text(
+                                    text = "Tap box to enable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                )
+                            }
                         }
                     }
 
@@ -439,44 +653,84 @@ private fun DayScheduleCard(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = onEditStopTime),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                            .clickable(enabled = day.stopEnabled, onClick = onEditStopTime),
+                        color = if (day.stopEnabled) {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (day.stopEnabled) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                        ),
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.PowerSettingsNew,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    "STOP",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    fontWeight = FontWeight.Bold,
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.PowerSettingsNew,
+                                        contentDescription = null,
+                                        tint = if (day.stopEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "STOP",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (day.stopEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                                Checkbox(
+                                    checked = day.stopEnabled,
+                                    onCheckedChange = onToggleStopEnabled,
+                                    modifier = Modifier.size(20.dp),
                                 )
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = formatTime(context, day.stopHour, day.stopMinute),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Text(
-                                text = "Tap to edit",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            if (day.stopEnabled) {
+                                Text(
+                                    text = formatTime(context, day.stopHour, day.stopMinute),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = "Tap to edit",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                )
+                            } else {
+                                Text(
+                                    text = "Disabled",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                )
+                                Text(
+                                    text = "Tap box to enable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                )
+                            }
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
-                // Duration Info
+                // Duration / Summary Info
+                val summaryInfo = when {
+                    day.startEnabled && day.stopEnabled -> {
+                        "Stops at ${formatTime(context, day.stopHour, day.stopMinute)} · Starts at ${formatTime(context, day.startHour, day.startMinute)} (${formatDurationText(day.startHour, day.startMinute, day.stopHour, day.stopMinute)})"
+                    }
+                    day.startEnabled -> "Only start charging at ${formatTime(context, day.startHour, day.startMinute)}"
+                    day.stopEnabled -> "Only stop charging at ${formatTime(context, day.stopHour, day.stopMinute)}"
+                    else -> "No actions enabled for this day"
+                }
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
@@ -489,7 +743,7 @@ private fun DayScheduleCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = formatDurationText(day.startHour, day.startMinute, day.stopHour, day.stopMinute),
+                        text = summaryInfo,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

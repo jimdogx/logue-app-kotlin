@@ -17,12 +17,15 @@ data class DaySchedule(
     val startMinute: Int = 0,
     val stopHour: Int = 16,  // 4:00 PM default
     val stopMinute: Int = 0,
+    val startEnabled: Boolean = true,
+    val stopEnabled: Boolean = true,
 )
 
 @Serializable
 data class WeeklyChargeSchedule(
     val vin: String = "",
     val isScheduleEnabled: Boolean = false,
+    val notificationsEnabled: Boolean = true,
     val days: List<DaySchedule> = defaultWeeklySchedule(),
 )
 
@@ -35,13 +38,13 @@ data class ScheduledChargeEvent(
 )
 
 fun defaultWeeklySchedule(): List<DaySchedule> = listOf(
-    DaySchedule(dayOfWeek = Calendar.SUNDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0),
-    DaySchedule(dayOfWeek = Calendar.MONDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0),
-    DaySchedule(dayOfWeek = Calendar.TUESDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0),
-    DaySchedule(dayOfWeek = Calendar.WEDNESDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0),
-    DaySchedule(dayOfWeek = Calendar.THURSDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0),
-    DaySchedule(dayOfWeek = Calendar.FRIDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0),
-    DaySchedule(dayOfWeek = Calendar.SATURDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0),
+    DaySchedule(dayOfWeek = Calendar.SUNDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0, startEnabled = true, stopEnabled = true),
+    DaySchedule(dayOfWeek = Calendar.MONDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0, startEnabled = true, stopEnabled = true),
+    DaySchedule(dayOfWeek = Calendar.TUESDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0, startEnabled = true, stopEnabled = true),
+    DaySchedule(dayOfWeek = Calendar.WEDNESDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0, startEnabled = true, stopEnabled = true),
+    DaySchedule(dayOfWeek = Calendar.THURSDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0, startEnabled = true, stopEnabled = true),
+    DaySchedule(dayOfWeek = Calendar.FRIDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0, startEnabled = true, stopEnabled = true),
+    DaySchedule(dayOfWeek = Calendar.SATURDAY, enabled = false, startHour = 20, startMinute = 0, stopHour = 16, stopMinute = 0, startEnabled = true, stopEnabled = true),
 )
 
 fun getDayName(dayOfWeek: Int): String = when (dayOfWeek) {
@@ -84,14 +87,15 @@ fun formatDurationText(startHour: Int, startMinute: Int, stopHour: Int, stopMinu
         else -> "$hours hrs $minutes mins"
     }
     return if (isNextDay) {
-        "$durationStr · Ends next day"
+        "$durationStr window · Stops next day"
     } else {
-        "$durationStr · Same day"
+        "$durationStr window · Same day"
     }
 }
 
 /**
  * Calculates the next upcoming scheduled charge event (START or STOP).
+ * Start and Stop triggers are evaluated independently on each enabled day.
  * Returns null if the schedule is disabled or no enabled days have upcoming events.
  */
 fun WeeklyChargeSchedule.getNextEvent(nowMillis: Long = System.currentTimeMillis()): ScheduledChargeEvent? {
@@ -100,56 +104,54 @@ fun WeeklyChargeSchedule.getNextEvent(nowMillis: Long = System.currentTimeMillis
     val candidates = mutableListOf<ScheduledChargeEvent>()
     val nowCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
 
-    // Check from -1 (yesterday, in case an overnight charge from yesterday stops today) through 7 days ahead
-    for (offset in -1..7) {
+    // Check each day starting from today (offset 0) through 7 days ahead
+    for (offset in 0..7) {
         val checkCal = (nowCal.clone() as Calendar).apply {
             add(Calendar.DAY_OF_YEAR, offset)
         }
         val checkDayOfWeek = checkCal.get(Calendar.DAY_OF_WEEK)
         val daySchedule = days.find { it.dayOfWeek == checkDayOfWeek && it.enabled } ?: continue
 
-        // 1. Start event
-        val startCal = (checkCal.clone() as Calendar).apply {
-            set(Calendar.HOUR_OF_DAY, daySchedule.startHour)
-            set(Calendar.MINUTE, daySchedule.startMinute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        if (startCal.timeInMillis > nowMillis) {
-            candidates.add(
-                ScheduledChargeEvent(
-                    action = ChargeAction.START,
-                    triggerTimeMillis = startCal.timeInMillis,
-                    dayOfWeek = checkDayOfWeek,
-                    targetHour = daySchedule.startHour,
-                    targetMinute = daySchedule.startMinute,
-                )
-            )
-        }
-
-        // 2. Stop event
-        val isOvernight = (daySchedule.stopHour < daySchedule.startHour) ||
-                (daySchedule.stopHour == daySchedule.startHour && daySchedule.stopMinute <= daySchedule.startMinute)
-
-        val stopCal = (checkCal.clone() as Calendar).apply {
-            if (isOvernight) {
-                add(Calendar.DAY_OF_YEAR, 1)
+        // 1. Independent Stop event for checkDayOfWeek
+        if (daySchedule.stopEnabled) {
+            val stopCal = (checkCal.clone() as Calendar).apply {
+                set(Calendar.HOUR_OF_DAY, daySchedule.stopHour)
+                set(Calendar.MINUTE, daySchedule.stopMinute)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
             }
-            set(Calendar.HOUR_OF_DAY, daySchedule.stopHour)
-            set(Calendar.MINUTE, daySchedule.stopMinute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        if (stopCal.timeInMillis > nowMillis) {
-            candidates.add(
-                ScheduledChargeEvent(
-                    action = ChargeAction.STOP,
-                    triggerTimeMillis = stopCal.timeInMillis,
-                    dayOfWeek = checkDayOfWeek,
-                    targetHour = daySchedule.stopHour,
-                    targetMinute = daySchedule.stopMinute,
+            if (stopCal.timeInMillis > nowMillis) {
+                candidates.add(
+                    ScheduledChargeEvent(
+                        action = ChargeAction.STOP,
+                        triggerTimeMillis = stopCal.timeInMillis,
+                        dayOfWeek = checkDayOfWeek,
+                        targetHour = daySchedule.stopHour,
+                        targetMinute = daySchedule.stopMinute,
+                    )
                 )
-            )
+            }
+        }
+
+        // 2. Independent Start event for checkDayOfWeek
+        if (daySchedule.startEnabled) {
+            val startCal = (checkCal.clone() as Calendar).apply {
+                set(Calendar.HOUR_OF_DAY, daySchedule.startHour)
+                set(Calendar.MINUTE, daySchedule.startMinute)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            if (startCal.timeInMillis > nowMillis) {
+                candidates.add(
+                    ScheduledChargeEvent(
+                        action = ChargeAction.START,
+                        triggerTimeMillis = startCal.timeInMillis,
+                        dayOfWeek = checkDayOfWeek,
+                        targetHour = daySchedule.startHour,
+                        targetMinute = daySchedule.startMinute,
+                    )
+                )
+            }
         }
     }
 
