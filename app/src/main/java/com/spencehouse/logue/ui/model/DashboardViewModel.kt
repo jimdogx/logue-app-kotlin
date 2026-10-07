@@ -259,17 +259,28 @@ class DashboardViewModel @Inject constructor(
             ?: evStatus?.optString("plugStatus")?.takeIf { it.isNotEmpty() && !it.startsWith("{") }
             ?: evStatus?.optString("evPlugin")?.takeIf { it.isNotEmpty() }
         val chargeModeValue = vehicleInfo?.optJSONObject("chargeMode")?.takeIf { it.optBoolean("valid", false) }?.optString("value")?.takeIf { it.isNotEmpty() }
+            ?: vehicleInfo?.optJSONObject("chargeMode1")?.takeIf { it.optBoolean("valid", false) }?.optString("value")?.takeIf { it.isNotEmpty() }
             ?: evStatus?.optString("chargeMode")?.takeIf { it.isNotEmpty() && !it.startsWith("{") }
             ?: evStatus?.optString("chargerVoltage")?.takeIf { it.isNotEmpty() }
+            ?: rb.optJSONObject("chargerPowerLevel")?.optString("value")?.takeIf { it.isNotEmpty() }
+            ?: rb.optJSONObject("chargerVoltage")?.optString("value")?.takeIf { it.isNotEmpty() }
+            ?: vehicleInfo?.optJSONObject("chargerPowerLevel")?.optString("value")?.takeIf { it.isNotEmpty() }
+            ?: vehicleInfo?.optJSONObject("chargerVoltage")?.optString("value")?.takeIf { it.isNotEmpty() }
 
         val targetLevel = chargeMode?.optJSONObject("generalAwayTargetChargeLevel")?.optInt("value") ?: 80
 
         val isPluggedIn = (plugStatus?.lowercase() == "plugged") ||
-            (plugStatus == "1") ||
+            (plugStatus == "1") || (plugStatus == "2") || (plugStatus == "3") ||
             (chargeStatus?.lowercase() == "charging") ||
             (chargeStatus == "1")
 
-        val (mainStatus, voltage) = formatChargeStatus(chargeStatus, plugStatus, chargeModeValue)
+        val (mainStatus, voltage) = formatChargeStatus(
+            chargeStatus = chargeStatus,
+            plugStatus = plugStatus,
+            chargeMode = chargeModeValue,
+            batteryPercentage = battery,
+            cachedVoltage = authService.sessionManager.cachedVoltage.takeIf { it > 0 }
+        )
 
         val latRaw = vehicleInfo?.optJSONObject("curPosLat")?.takeIf { it.optBoolean("valid", false) }?.optString("value")
             ?: vehicleInfo?.optJSONObject("naviCurPosLat")?.takeIf { it.optBoolean("valid", false) }?.optString("value")
@@ -302,6 +313,12 @@ class DashboardViewModel @Inject constructor(
         authService.sessionManager.cachedChargeStatus = mainStatus
         authService.sessionManager.cachedIsPluggedIn = isPluggedIn
         authService.sessionManager.targetChargeLevel = targetLevel
+        val voltageInt = voltage?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
+        authService.sessionManager.cachedVoltage = if (isPluggedIn) {
+            voltageInt ?: authService.sessionManager.cachedVoltage.takeIf { it > 0 } ?: -1
+        } else {
+            -1
+        }
 
         uiState = uiState.copy(
             batteryPercentage = battery ?: uiState.batteryPercentage,
@@ -376,31 +393,49 @@ class DashboardViewModel @Inject constructor(
         return dateFormat.format(calendar.time)
     }
 
-    private fun formatChargeStatus(chargeStatus: String?, plugStatus: String?, chargeMode: String?): Pair<String, String?> {
-        val status = chargeStatus?.lowercase()
-        val pStatus = plugStatus?.lowercase()
+    companion object {
+        fun formatChargeStatus(
+            chargeStatus: String?,
+            plugStatus: String?,
+            chargeMode: String?,
+            batteryPercentage: Int? = null,
+            cachedVoltage: Int? = null
+        ): Pair<String, String?> {
+            val status = chargeStatus?.lowercase()
+            val pStatus = plugStatus?.lowercase()
 
-        val isPluggedIn = (pStatus == "plugged") || (pStatus == "1") || (status == "charging") || (status == "1")
+            val isPluggedIn = (pStatus == "plugged") ||
+                (pStatus == "1") || (pStatus == "2") || (pStatus == "3") ||
+                (status == "charging") || (status == "1")
 
-        if (!isPluggedIn) {
-            return "Unplugged" to null
+            if (!isPluggedIn) {
+                return "Unplugged" to null
+            }
+
+            val mainStatus = when {
+                status == "charging" || status == "1" -> "Charging"
+                status == "complete" || status == "2" || (batteryPercentage != null && batteryPercentage >= 100) -> "Complete"
+                else -> "Plugged In"
+            }
+
+            val chargeModeInt = chargeMode?.toIntOrNull()
+            val voltage = when {
+                // HondaLink / Clarity telematics chargeMode:
+                // In HondaLink app: 0 = "120 V", 1 = "240 V", 2 = "Rapid"
+                chargeModeInt == 0 -> "120V"
+                chargeModeInt == 1 -> "240V"
+                chargeModeInt == 2 -> "Rapid"
+                // Direct voltage numeric levels (e.g. 120, 208, 240, 400, etc.)
+                chargeModeInt != null && chargeModeInt >= 100 -> "${chargeModeInt}V"
+                chargeMode?.contains("120") == true -> "120V"
+                chargeMode?.contains("240") == true -> "240V"
+                chargeMode?.contains("rapid", ignoreCase = true) == true -> "Rapid"
+                cachedVoltage != null && cachedVoltage > 0 -> "${cachedVoltage}V"
+                else -> null
+            }
+
+            return mainStatus to voltage
         }
-
-        var mainStatus = "Plugged In"
-        when (status) {
-            "charging", "1" -> mainStatus = "Charging"
-            "complete" -> mainStatus = "Complete"
-        }
-
-        val chargeModeInt = chargeMode?.toIntOrNull()
-        val voltage = when {
-            chargeModeInt == 1 -> "120V"
-            chargeModeInt == 2 -> "240V"
-            chargeModeInt != null && chargeModeInt > 2 -> "${chargeModeInt}V"
-            else -> null
-        }
-
-        return mainStatus to voltage
     }
 
     private fun parseTires(tireStatus: JSONObject?): Map<String, Double?> {

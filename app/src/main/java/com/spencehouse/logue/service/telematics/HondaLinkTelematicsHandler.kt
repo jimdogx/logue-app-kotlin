@@ -308,18 +308,42 @@ class HondaLinkTelematicsHandler @Inject constructor(
                 ?: evStatus["chargeStatus"]?.jsonPrimitive?.content
                 ?: evStatus["chgStatus"]?.jsonPrimitive?.content
 
+            val chargeModeRaw = vehicleInfo?.get("chargeMode")?.jsonObject?.takeIf {
+                val v = it["valid"]?.jsonPrimitive?.content
+                v == "true" || v == "1"
+            }?.get("value")?.jsonPrimitive?.content
+                ?: vehicleInfo?.get("chargeMode1")?.jsonObject?.takeIf {
+                    val v = it["valid"]?.jsonPrimitive?.content
+                    v == "true" || v == "1"
+                }?.get("value")?.jsonPrimitive?.content
+                ?: evStatus["chargeMode"]?.jsonPrimitive?.content
+                ?: evStatus["chargerVoltage"]?.jsonPrimitive?.content
+                ?: responseBody["chargerPowerLevel"]?.jsonObject?.get("value")?.jsonPrimitive?.content
+                ?: responseBody["chargerVoltage"]?.jsonObject?.get("value")?.jsonPrimitive?.content
+
             if (plugRaw != null || chargeRaw != null) {
                 val isPlugged = plugRaw.equals("plugged", ignoreCase = true) ||
-                    plugRaw == "1" ||
+                    plugRaw == "1" || plugRaw == "2" || plugRaw == "3" ||
                     chargeRaw.equals("charging", ignoreCase = true) ||
                     chargeRaw == "1"
                 sessionManager.cachedIsPluggedIn = isPlugged
                 sessionManager.cachedChargeStatus = when {
                     !isPlugged -> "Unplugged"
                     chargeRaw.equals("charging", ignoreCase = true) || chargeRaw == "1" -> "Charging"
-                    chargeRaw.equals("complete", ignoreCase = true) -> "Complete"
+                    chargeRaw.equals("complete", ignoreCase = true) || (battery != null && battery >= 100) -> "Complete"
                     else -> "Plugged In"
                 }
+                val modeInt = chargeModeRaw?.toIntOrNull()
+                val cachedV = when {
+                    modeInt == 0 -> 120
+                    modeInt == 1 -> 240
+                    modeInt != null && modeInt >= 100 -> modeInt
+                    chargeModeRaw?.contains("120") == true -> 120
+                    chargeModeRaw?.contains("240") == true -> 240
+                    sessionManager.cachedVoltage > 0 -> sessionManager.cachedVoltage
+                    else -> null
+                }
+                sessionManager.cachedVoltage = if (isPlugged && cachedV != null) cachedV else if (isPlugged) sessionManager.cachedVoltage else -1
             }
 
             val acRaw = vehicleInfo?.get("acStatus")?.jsonObject?.get("value")?.jsonPrimitive?.content

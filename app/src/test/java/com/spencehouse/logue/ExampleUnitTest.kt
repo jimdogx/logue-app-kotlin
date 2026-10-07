@@ -1,10 +1,104 @@
 package com.spencehouse.logue
 
+import com.spencehouse.logue.ui.model.DashboardViewModel
 import org.json.JSONObject
 import org.junit.Test
 import org.junit.Assert.*
 
 class ExampleUnitTest {
+    @Test
+    fun testClarityChargeStatusAndVoltage() {
+        // Clarity PHEV on 240V Level 2 (chargeMode = "1")
+        val (status240, voltage240) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "charging",
+            plugStatus = "plugged",
+            chargeMode = "1"
+        )
+        assertEquals("Charging", status240)
+        assertEquals("240V", voltage240)
+
+        // Clarity PHEV on 120V Level 1 (chargeMode = "0")
+        val (status120, voltage120) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "1",
+            plugStatus = "1",
+            chargeMode = "0"
+        )
+        assertEquals("Charging", status120)
+        assertEquals("120V", voltage120)
+
+        // Clarity PHEV Rapid / DCFC (chargeMode = "2")
+        val (statusRapid, voltageRapid) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "charging",
+            plugStatus = "plugged",
+            chargeMode = "2"
+        )
+        assertEquals("Charging", statusRapid)
+        assertEquals("Rapid", voltageRapid)
+
+        // Ultium EV literal 120 / 240
+        val (_, voltUltium120) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "charging",
+            plugStatus = "plugged",
+            chargeMode = "120"
+        )
+        assertEquals("120V", voltUltium120)
+
+        val (_, voltUltium240) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "charging",
+            plugStatus = "plugged",
+            chargeMode = "240"
+        )
+        assertEquals("240V", voltUltium240)
+
+        // Unplugged state -> null voltage
+        val (statusUnplugged, voltageUnplugged) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "0",
+            plugStatus = "0",
+            chargeMode = "1"
+        )
+        assertEquals("Unplugged", statusUnplugged)
+        assertNull(voltageUnplugged)
+
+        // Plugged in but complete
+        val (statusComplete, voltageComplete) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "complete",
+            plugStatus = "plugged",
+            chargeMode = "1"
+        )
+        assertEquals("Complete", statusComplete)
+        assertEquals("240V", voltageComplete)
+
+        // Actual Clarity logcat state: plugStatus="2" (locked/connected), chargeStatus="0", soc=100, chargeMode1="1"
+        val (statusFinished, voltageFinished) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "0",
+            plugStatus = "2",
+            chargeMode = "1",
+            batteryPercentage = 100
+        )
+        assertEquals("Complete", statusFinished)
+        assertEquals("240V", voltageFinished)
+
+        // Clarity finished charging with chargeMode empty, but previous cachedVoltage=240
+        val (statusCached, voltageCached) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "0",
+            plugStatus = "2",
+            chargeMode = null,
+            batteryPercentage = 100,
+            cachedVoltage = 240
+        )
+        assertEquals("Complete", statusCached)
+        assertEquals("240V", voltageCached)
+
+        // plugStatus = "3"
+        val (statusPlug3, _) = DashboardViewModel.formatChargeStatus(
+            chargeStatus = "0",
+            plugStatus = "3",
+            chargeMode = null,
+            batteryPercentage = 80
+        )
+        assertEquals("Plugged In", statusPlug3)
+    }
+
     @Test
     fun testLocationParsing() {
         val payload = """
